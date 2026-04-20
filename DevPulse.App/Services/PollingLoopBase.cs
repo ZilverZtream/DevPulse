@@ -56,7 +56,8 @@ public abstract class PollingLoopBase : IDisposable, IAsyncDisposable
         }
         finally
         {
-            _runLock.Release();
+            try { _runLock.Release(); }
+            catch (ObjectDisposedException) { }
         }
     }
 
@@ -75,10 +76,7 @@ public abstract class PollingLoopBase : IDisposable, IAsyncDisposable
 
     public void Dispose()
     {
-        _cts.Cancel();
-        _loopTask?.Wait(TimeSpan.FromSeconds(2));
-        _cts.Dispose();
-        _runLock.Dispose();
+        DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(10));
         GC.SuppressFinalize(this);
     }
 }
