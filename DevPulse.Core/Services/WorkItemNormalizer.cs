@@ -29,7 +29,7 @@ public sealed partial class WorkItemNormalizer
         else
         {
             Log.Warning("WorkItemNormalizer: missing StateChangedDate for work item {Id}, using UtcNow", dto.Id);
-            stateChangedAt = DateTimeOffset.UtcNow;
+            stateChangedAt = now;
         }
 
         var days = Math.Max(0, (int)(now - stateChangedAt).TotalDays);

@@ -234,3 +234,26 @@ public class RuleEngineNullMessageTests
         Assert.Equal("Filtered", result); // empty string doesn't match "noise" exclude, rule passes, routes here
     }
 }
+
+public class WorkItemNormalizerFallbackClockTests
+{
+    [Fact]
+    public void Normalize_MissingStateChangedDate_UsesFallbackNow()
+    {
+        var normalizer = new WorkItemNormalizer();
+        var explicitNow = new DateTimeOffset(2024, 6, 15, 12, 0, 0, TimeSpan.Zero);
+        var dto = new WorkItemDto
+        {
+            Id = 42,
+            Title = "X",
+            WorkItemType = "Bug",
+            State = "Active",
+            StateChangedDate = null
+        };
+
+        var item = normalizer.Normalize(dto, [], explicitNow);
+
+        Assert.Equal(explicitNow, item.StateChangedAtUtc);
+        Assert.Equal(0, item.DaysInCurrentState);
+    }
+}
