@@ -19,6 +19,7 @@ public sealed class InboxEventsForm : Form
     private readonly SettingsService _settings;
     private readonly string _inboxName;
     private readonly BoardForm? _boardForm;
+    private readonly CancellationTokenSource _formCts = new();
 
     private ListView _listView = null!;
     private bool _loading;
@@ -35,6 +36,7 @@ public sealed class InboxEventsForm : Form
         _settings = settings;
         _inboxName = inboxName;
         _boardForm = boardForm;
+        Disposed += (_, _) => _formCts.Cancel();
         InitializeComponent();
         LoadEventsAsync().FireAndForget(nameof(LoadEventsAsync));
     }
@@ -97,7 +99,7 @@ public sealed class InboxEventsForm : Form
         _loading = true;
         try
         {
-            var events = await _viewService.GetLatestAsync(_inboxName, 100);
+            var events = await _viewService.GetLatestAsync(_inboxName, 100, _formCts.Token);
             if (IsDisposed) return;
             try
             {
@@ -107,11 +109,24 @@ public sealed class InboxEventsForm : Form
                     var icon = evt.IsCollapsed ? "⊞" : evt.IsRead ? "·" : "●";
                     var item = new ListViewItem(icon);
                     item.SubItems.Add($"#{evt.PullRequestId}");
-                    item.SubItems.Add(evt.PullRequestTitle.EnumerateRunes().Skip(35).Any() ? TruncateRunes(evt.PullRequestTitle, 35) + "…" : evt.PullRequestTitle);
+                    var titleRunes = evt.PullRequestTitle.EnumerateRunes().Take(36).ToList();
+                    var title = titleRunes.Count > 35
+                        ? string.Concat(titleRunes.Take(35).Select(r => r.ToString())) + "…"
+                        : evt.PullRequestTitle;
+                    item.SubItems.Add(title);
                     item.SubItems.Add(evt.AuthorDisplayName);
-                    var summary = evt.IsCollapsed
-                        ? $"{evt.CollapsedCount} events collapsed"
-                        : evt.MessageText.EnumerateRunes().Skip(40).Any() ? TruncateRunes(evt.MessageText, 40) + "…" : evt.MessageText;
+                    string summary;
+                    if (evt.IsCollapsed)
+                    {
+                        summary = $"{evt.CollapsedCount} events collapsed";
+                    }
+                    else
+                    {
+                        var msgRunes = evt.MessageText.EnumerateRunes().Take(41).ToList();
+                        summary = msgRunes.Count > 40
+                            ? string.Concat(msgRunes.Take(40).Select(r => r.ToString())) + "…"
+                            : evt.MessageText;
+                    }
                     item.SubItems.Add(summary);
                     item.SubItems.Add(evt.DiscoveredAtUtc.ToLocalTime().ToString("MM/dd HH:mm"));
                     item.Tag = evt;
@@ -150,7 +165,7 @@ public sealed class InboxEventsForm : Form
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Mark as read", null, async (_, _) =>
         {
-            try { await _viewService.MarkReadAsync([evt.EventId]); await LoadEventsAsync(); }
+            try { await _viewService.MarkReadAsync([evt.EventId], _formCts.Token); await LoadEventsAsync(); }
             catch (Exception ex) { Log.Error(ex, "Mark read failed for event {EventId}", evt.EventId); }
         });
         menu.Items.Add("Snooze PR (1h)", null, async (_, _) =>
@@ -194,24 +209,21 @@ public sealed class InboxEventsForm : Form
     private async Task SnoozePrAsync(int prId, TimeSpan duration)
     {
         var entry = MuteService.CreatePrSnooze(prId, DateTimeOffset.UtcNow + duration);
-        await _store.SaveMuteEntryAsync(entry);
+        await _store.SaveMuteEntryAsync(entry, _formCts.Token);
     }
 
     private async Task MutePrAsync(int prId)
     {
         var entry = MuteService.CreatePrMute(prId);
-        await _store.SaveMuteEntryAsync(entry);
+        await _store.SaveMuteEntryAsync(entry, _formCts.Token);
     }
 
     private async Task MarkAllReadAsync()
     {
-        var events = await _viewService.GetLatestAsync(_inboxName, 1000);
-        await _viewService.MarkReadAsync(events.Select(e => e.EventId));
+        var events = await _viewService.GetLatestAsync(_inboxName, 1000, _formCts.Token);
+        await _viewService.MarkReadAsync(events.Select(e => e.EventId), _formCts.Token);
         await LoadEventsAsync();
     }
-
-    private static string TruncateRunes(string s, int maxRunes) =>
-        string.Concat(s.EnumerateRunes().Take(maxRunes).Select(r => r.ToString()));
 
     private static Button DarkButton(string text)
     {
