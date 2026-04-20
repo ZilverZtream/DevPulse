@@ -49,6 +49,7 @@ public sealed class PollingService : PollingLoopBase
         var idNorm = new IdentityNormalizer(aliases, appSettings.BotIdentityPatterns);
 
         var prs = await _adoClient.GetRelevantPullRequestsAsync(ct);
+        prs = prs.DistinctBy(pr => pr.PullRequestId).ToList();
         apiCallCount++;
 
         var allNewEvents = new List<DevOpsEvent>();
@@ -56,9 +57,14 @@ public sealed class PollingService : PollingLoopBase
 
         // Gather per-PR snapshot data and status/vote events
         var prSnapshots = new List<(PullRequestDto Pr, string? PrevStatus, string? PrevVotesJson, Dictionary<string, int> CurrVotes)>();
+        var prIdList = prs.Select(pr => pr.PullRequestId).ToList();
+        var existingSnapshots = await _store.GetPrSnapshotsAsync(prIdList, ct);
+
         foreach (var pr in prs)
         {
-            var (prevStatus, prevVotesJson) = await _store.GetPrSnapshotAsync(pr.PullRequestId, ct);
+            existingSnapshots.TryGetValue(pr.PullRequestId, out var snap);
+            var prevStatus = snap.Status;
+            var prevVotesJson = snap.VotesJson;
             var currVotes = pr.Reviewers
                 .Where(r => !string.IsNullOrEmpty(r.Id))
                 .GroupBy(r => r.Id)
@@ -148,7 +154,7 @@ public sealed class PollingService : PollingLoopBase
                     var authorIdentity = comment.Author ?? new IdentityRefDto();
                     var authorCanon = idNorm.Normalize(authorIdentity);
                     var source = idNorm.ClassifySource(authorIdentity);
-                    var meaning = _eventNorm.DeriveCommentMeaning(comment.Content, appSettings.CurrentUserCanonicalKey);
+                    var meaning = _eventNorm.DeriveCommentMeaning(comment.Content, appSettings.CurrentUserCanonicalKey, appSettings.CurrentUserDisplayName);
 
                     allNewEvents.Add(new DevOpsEvent
                     {
@@ -198,7 +204,7 @@ public sealed class PollingService : PollingLoopBase
         var notifiedIds = new List<string>();
         foreach (var evt in collapsed)
         {
-            var inbox = inboxes.FirstOrDefault(i => i.Name == evt.InboxName);
+            var inbox = inboxes.FirstOrDefault(i => i.Name.Equals(evt.InboxName, StringComparison.OrdinalIgnoreCase));
             if (inbox?.ShowNotifications == true)
             {
                 try

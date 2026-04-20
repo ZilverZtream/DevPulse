@@ -23,6 +23,7 @@ public interface IStateStore
 
     Task SavePrSnapshotAsync(int prId, string status, string votesJson, CancellationToken ct = default);
     Task<(string? Status, string? VotesJson)> GetPrSnapshotAsync(int prId, CancellationToken ct = default);
+    Task<Dictionary<int, (string? Status, string? VotesJson)>> GetPrSnapshotsAsync(IEnumerable<int> prIds, CancellationToken ct = default);
     Task CleanStaleSnapshotsAsync(int retainDays = 30, CancellationToken ct = default);
 
     Task<int> GetUnreadCountForInboxAsync(string inboxName, CancellationToken ct = default);

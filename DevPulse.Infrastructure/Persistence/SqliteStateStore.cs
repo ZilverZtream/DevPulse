@@ -11,6 +11,7 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
 {
     private readonly SqliteConnection _conn;
     private readonly SemaphoreSlim _lock = new(1, 1);
+    private int _disposed;
 
     public SqliteStateStore(string dbPath)
     {
@@ -511,6 +512,30 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
         finally { _lock.Release(); }
     }
 
+    public async Task<Dictionary<int, (string? Status, string? VotesJson)>> GetPrSnapshotsAsync(IEnumerable<int> prIds, CancellationToken ct = default)
+    {
+        var ids = prIds.ToList();
+        if (ids.Count == 0) return [];
+        await _lock.WaitAsync(ct);
+        try
+        {
+            await using var cmd = _conn.CreateCommand();
+            var paramNames = ids.Select((_, i) => $"@p{i}").ToList();
+            cmd.CommandText = $"SELECT pr_id, status, votes_json FROM pr_snapshots WHERE pr_id IN ({string.Join(",", paramNames)})";
+            for (int i = 0; i < ids.Count; i++)
+                cmd.Parameters.AddWithValue($"@p{i}", ids[i]);
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            var result = new Dictionary<int, (string?, string?)>();
+            var ordPrId = reader.GetOrdinal("pr_id");
+            var ordStatus = reader.GetOrdinal("status");
+            var ordVotes = reader.GetOrdinal("votes_json");
+            while (await reader.ReadAsync(ct))
+                result[reader.GetInt32(ordPrId)] = (reader.GetString(ordStatus), reader.GetString(ordVotes));
+            return result;
+        }
+        finally { _lock.Release(); }
+    }
+
     public async Task CleanStaleSnapshotsAsync(int retainDays = 30, CancellationToken ct = default)
     {
         await _lock.WaitAsync(ct);
@@ -541,7 +566,7 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
             cmd.CommandText = "SELECT value FROM kv_settings WHERE key = @key";
             cmd.Parameters.AddWithValue("@key", key);
             var val = await cmd.ExecuteScalarAsync(ct);
-            return val == null || val == DBNull.Value ? null : (string)val;
+            return val == null || val == DBNull.Value ? null : val.ToString();
         }
         finally { _lock.Release(); }
     }
@@ -634,6 +659,7 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.CompareExchange(ref _disposed, 1, 0) != 0) return;
         await _conn.CloseAsync();
         _conn.Dispose();
         _lock.Dispose();
