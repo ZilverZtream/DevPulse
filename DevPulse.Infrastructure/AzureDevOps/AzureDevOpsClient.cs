@@ -33,7 +33,7 @@ public sealed class AzureDevOpsClient : IAzureDevOpsClient
         const int pageSize = 200;
         const int maxPages = 5;
         var allPrs = new List<PullRequestDto>();
-        bool reachedHardCap = true;
+        bool reachedHardCap = false;
 
         for (int page = 0; page < maxPages; page++)
         {
@@ -48,10 +48,11 @@ public sealed class AzureDevOpsClient : IAzureDevOpsClient
             var body = await response.Content.ReadAsStringAsync(ct);
             var result = JsonSerializer.Deserialize<AdoListResponse<AdoPullRequest>>(body, JsonOpts);
             var pageItems = result?.Value;
-            if (pageItems == null || pageItems.Count == 0) { reachedHardCap = false; break; }
+            if (pageItems == null || pageItems.Count == 0) break;
 
             allPrs.AddRange(pageItems.Select(Map));
-            if (pageItems.Count < pageSize) { reachedHardCap = false; break; }
+            if (pageItems.Count < pageSize) break;
+            if (page == maxPages - 1) reachedHardCap = true;
         }
 
         if (reachedHardCap)
