@@ -103,6 +103,7 @@ public sealed class PollingService : PollingLoopBase
                 var threads = await _adoClient.GetPullRequestThreadsAsync(pr.PullRequestId, pr.RepositoryId, ct);
                 return (pr, threads);
             }
+            catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
                 Log.Warning(ex, "Thread fetch failed for PR #{PrId}; treating as empty", pr.PullRequestId);
@@ -124,7 +125,7 @@ public sealed class PollingService : PollingLoopBase
 
         // Batch status/vote/reviewer event IDs for dedup
         var candidateStatusVoteIds = allNewEvents.Select(e => e.EventId).ToList();
-        var allCandidateIds = candidateCommentIds.Concat(candidateStatusVoteIds).Distinct().ToList();
+        var allCandidateIds = candidateCommentIds.Concat(candidateStatusVoteIds).ToList();
         var existingIds = await _store.GetExistingEventIdsAsync(allCandidateIds, ct);
 
         // Build comment events (skip already-known), save snapshots
@@ -180,9 +181,6 @@ public sealed class PollingService : PollingLoopBase
         var unmuted = _muteService.Filter(newEvents, activeMutes, pollTime);
         var collapsed = _collapser.Collapse(unmuted, pollTime);
 
-        Log.Information("Poll 'prs': {PrCount} PRs, {Candidates} candidate events, {New} new, {Muted} muted, {Saved} saved",
-            prs.Count, allNewEvents.Count, newEvents.Count, newEvents.Count - unmuted.Count, collapsed.Count);
-
         foreach (var evt in collapsed)
         {
             evt.InboxName = _ruleEngine.AssignInbox(evt, watchers, inboxes, packs, appSettings);
@@ -191,11 +189,17 @@ public sealed class PollingService : PollingLoopBase
 
         await _store.SaveEventsAsync(collapsed, ct);
 
+        Log.Information("Poll 'prs': {PrCount} PRs, {Candidates} candidate events, {New} new, {Muted} muted, {Saved} saved",
+            prs.Count, allNewEvents.Count, newEvents.Count, newEvents.Count - unmuted.Count, collapsed.Count);
+
         foreach (var evt in collapsed)
         {
             var inbox = inboxes.FirstOrDefault(i => i.Name == evt.InboxName);
             if (inbox?.ShowNotifications == true)
-                await _notifications.ShowAsync(evt);
+            {
+                try { await _notifications.ShowAsync(evt); }
+                catch (Exception ex) { Log.Warning(ex, "Notification failed for event {EventId}", evt.EventId); }
+            }
         }
 
         await _store.CleanStaleSnapshotsAsync(30, ct);
@@ -236,7 +240,7 @@ public sealed class PollingService : PollingLoopBase
 
     private DevOpsEvent BuildVoteEvent(PullRequestDto pr, ReviewerDto reviewer, AppSettings settings, IdentityNormalizer idNorm, DateTimeOffset pollTime)
     {
-        var identity = new IdentityRefDto { DisplayName = reviewer.DisplayName, UniqueName = reviewer.UniqueName, Id = reviewer.Id };
+        var identity = reviewer.AsIdentityRef();
         var meaning = _eventNorm.DeriveVoteMeaning(reviewer.Vote);
         return new DevOpsEvent
         {
@@ -262,7 +266,7 @@ public sealed class PollingService : PollingLoopBase
 
     private DevOpsEvent BuildReviewerAddedEvent(PullRequestDto pr, ReviewerDto reviewer, AppSettings settings, IdentityNormalizer idNorm, DateTimeOffset pollTime)
     {
-        var identity = new IdentityRefDto { DisplayName = reviewer.DisplayName, UniqueName = reviewer.UniqueName, Id = reviewer.Id };
+        var identity = reviewer.AsIdentityRef();
         return new DevOpsEvent
         {
             EventId = _eventNorm.BuildReviewerAddedEventId(pr.PullRequestId, reviewer.Id),

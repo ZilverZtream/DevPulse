@@ -50,6 +50,7 @@ public sealed class ReviewerDto
     public string UniqueName { get; set; } = string.Empty;
     public string Id { get; set; } = string.Empty;
     public int Vote { get; set; }
+    public IdentityRefDto AsIdentityRef() => new() { DisplayName = DisplayName, UniqueName = UniqueName, Id = Id };
 }
 
 public sealed class IdentityRefDto
