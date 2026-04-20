@@ -88,5 +88,29 @@ public static class DbSchema
             );
             """;
         await cmd.ExecuteNonQueryAsync();
+
+        // Inline migration: add typed mute columns (idempotent — silent on duplicate)
+        foreach (var alter in new[]
+        {
+            "ALTER TABLE mute_entries ADD COLUMN pr_id INTEGER",
+            "ALTER TABLE mute_entries ADD COLUMN author_key TEXT NOT NULL DEFAULT ''"
+        })
+        {
+            try
+            {
+                await using var m = conn.CreateCommand();
+                m.CommandText = alter;
+                await m.ExecuteNonQueryAsync();
+            }
+            catch (SqliteException) { /* column already exists */ }
+        }
+
+        // Back-fill typed columns from legacy key column
+        await using var backfill = conn.CreateCommand();
+        backfill.CommandText = """
+            UPDATE mute_entries SET pr_id = CAST(key AS INTEGER) WHERE scope = 0 AND pr_id IS NULL;
+            UPDATE mute_entries SET author_key = key WHERE scope = 1 AND (author_key IS NULL OR author_key = '');
+            """;
+        await backfill.ExecuteNonQueryAsync();
     }
 }

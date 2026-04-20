@@ -266,26 +266,32 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
         {
             await using var cmd = _conn.CreateCommand();
             cmd.CommandText = """
-                INSERT INTO mute_entries VALUES (@scope, @key, @exp)
-                ON CONFLICT(scope, key) DO UPDATE SET expires_at=excluded.expires_at
+                INSERT INTO mute_entries (scope, key, expires_at, pr_id, author_key)
+                VALUES (@scope, @key, @exp, @prid, @akey)
+                ON CONFLICT(scope, key) DO UPDATE SET
+                    expires_at = excluded.expires_at,
+                    pr_id = excluded.pr_id,
+                    author_key = excluded.author_key
                 """;
             cmd.Parameters.AddWithValue("@scope", (int)entry.Scope);
-            cmd.Parameters.AddWithValue("@key", entry.Key);
+            cmd.Parameters.AddWithValue("@key", entry.DbKey);
             cmd.Parameters.AddWithValue("@exp", (object?)entry.ExpiresAtUtc?.ToString("O") ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@prid", (object?)entry.PrId ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@akey", entry.AuthorKey);
             await cmd.ExecuteNonQueryAsync(ct);
         }
         finally { _lock.Release(); }
     }
 
-    public async Task RemoveMuteEntryAsync(MuteScope scope, string key, CancellationToken ct = default)
+    public async Task RemoveMuteEntryAsync(MuteEntry entry, CancellationToken ct = default)
     {
         await _lock.WaitAsync(ct);
         try
         {
             await using var cmd = _conn.CreateCommand();
             cmd.CommandText = "DELETE FROM mute_entries WHERE scope = @scope AND key = @key";
-            cmd.Parameters.AddWithValue("@scope", (int)scope);
-            cmd.Parameters.AddWithValue("@key", key);
+            cmd.Parameters.AddWithValue("@scope", (int)entry.Scope);
+            cmd.Parameters.AddWithValue("@key", entry.DbKey);
             await cmd.ExecuteNonQueryAsync(ct);
         }
         finally { _lock.Release(); }
@@ -297,7 +303,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
         try
         {
             await using var cmd = _conn.CreateCommand();
-            cmd.CommandText = "SELECT scope, key, expires_at FROM mute_entries";
+            cmd.CommandText = "SELECT scope, key, expires_at, pr_id, author_key FROM mute_entries";
             await using var reader = await cmd.ExecuteReaderAsync(ct);
             var list = new List<MuteEntry>();
             var now = DateTimeOffset.UtcNow;
@@ -308,7 +314,8 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
                 list.Add(new MuteEntry
                 {
                     Scope = (MuteScope)reader.GetInt32(0),
-                    Key = reader.GetString(1),
+                    PrId = reader.IsDBNull(3) ? null : reader.GetInt32(3),
+                    AuthorKey = reader.IsDBNull(4) ? string.Empty : reader.GetString(4),
                     ExpiresAtUtc = exp
                 });
             }

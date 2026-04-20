@@ -1,4 +1,3 @@
-using DevPulse.Core.Enums;
 using DevPulse.Core.Models;
 
 namespace DevPulse.Core.Interfaces;
@@ -15,7 +14,7 @@ public interface IStateStore
     Task<IReadOnlyList<WorkItem>> GetWorkItemsAsync(CancellationToken ct = default);
 
     Task SaveMuteEntryAsync(MuteEntry entry, CancellationToken ct = default);
-    Task RemoveMuteEntryAsync(MuteScope scope, string key, CancellationToken ct = default);
+    Task RemoveMuteEntryAsync(MuteEntry entry, CancellationToken ct = default);
     Task<IReadOnlyList<MuteEntry>> GetActiveMutesAsync(CancellationToken ct = default);
 
     Task<DateTimeOffset?> GetLastSuccessfulPollAsync(string track, CancellationToken ct = default);

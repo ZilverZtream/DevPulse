@@ -17,12 +17,11 @@ public sealed class MuteService
             if (mute.ExpiresAtUtc.HasValue && mute.ExpiresAtUtc.Value <= now)
                 continue;
 
-            if (mute.Scope == MuteScope.PullRequest &&
-                mute.Key == evt.PullRequestId.ToString())
+            if (mute.Scope == MuteScope.PullRequest && mute.PrId == evt.PullRequestId)
                 return true;
 
             if (mute.Scope == MuteScope.Author &&
-                mute.Key.Equals(evt.AuthorCanonicalKey, StringComparison.OrdinalIgnoreCase))
+                mute.AuthorKey.Equals(evt.AuthorCanonicalKey, StringComparison.OrdinalIgnoreCase))
                 return true;
         }
         return false;
@@ -31,28 +30,26 @@ public sealed class MuteService
     public static MuteEntry CreatePrMute(int prId) => new()
     {
         Scope = MuteScope.PullRequest,
-        Key = prId.ToString(),
-        ExpiresAtUtc = null
+        PrId = prId
     };
 
     public static MuteEntry CreatePrSnooze(int prId, DateTimeOffset expiresAt) => new()
     {
         Scope = MuteScope.PullRequest,
-        Key = prId.ToString(),
+        PrId = prId,
         ExpiresAtUtc = expiresAt
     };
 
     public static MuteEntry CreateAuthorMuteToday(string canonicalKey, DateTimeOffset now) => new()
     {
         Scope = MuteScope.Author,
-        Key = canonicalKey,
+        AuthorKey = canonicalKey,
         ExpiresAtUtc = now.Date.AddDays(1)
     };
 
     public static MuteEntry CreateAuthorMutePermanent(string canonicalKey) => new()
     {
         Scope = MuteScope.Author,
-        Key = canonicalKey,
-        ExpiresAtUtc = null
+        AuthorKey = canonicalKey
     };
 }
