@@ -89,3 +89,29 @@ public class IdentityNormalizerTests
         Assert.Equal(PrEventSource.Bot, result);
     }
 }
+
+public class WiqlPathValidationTests
+{
+    [Theory]
+    [InlineData(@"MyOrg\MyProject\Team & QA")]
+    [InlineData(@"Sprint (2024-Q1)")]
+    [InlineData("Area: Platform")]
+    [InlineData(@"Backlog\Feature: Auth")]
+    public void ValidateWiqlPath_LegitimateAdoNames_DoesNotThrow(string path)
+    {
+        var result = WiqlPathGuard.ValidatePath(path, "areaPath");
+        Assert.Equal(path, result);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("path;DROP TABLE--")]
+    [InlineData("path\x00")]
+    [InlineData("path\ninjection")]
+    [InlineData("path'injection")]
+    public void ValidateWiqlPath_InvalidPaths_Throws(string path)
+    {
+        Assert.Throws<ArgumentException>(() => WiqlPathGuard.ValidatePath(path, "areaPath"));
+    }
+}

@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DevPulse.Core.Interfaces;
+using DevPulse.Core.Services;
 using Serilog;
 
 namespace DevPulse.Infrastructure.AzureDevOps;
@@ -21,17 +22,8 @@ public sealed class WorkItemClient : IWorkItemClient
     private const string Fields = "System.Id,System.Title,System.WorkItemType,System.State,Microsoft.VSTS.Common.Priority," +
                                   "System.AssignedTo,System.AreaPath,System.IterationPath,System.StateChangeDate,System.TeamProject";
 
-    private static readonly System.Text.RegularExpressions.Regex SafePathPattern =
-        new(@"^[\w\s\\/\-\.]+$", System.Text.RegularExpressions.RegexOptions.Compiled);
-
-    private static string ValidatePath(string value, string paramName)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            throw new ArgumentException($"Path '{paramName}' cannot be empty.", paramName);
-        if (!SafePathPattern.IsMatch(value))
-            throw new ArgumentException($"Path '{paramName}' contains invalid characters: {value}", paramName);
-        return value;
-    }
+    private static string ValidateWiqlPath(string value, string paramName) =>
+        WiqlPathGuard.ValidatePath(value, paramName);
 
     public WorkItemClient(HttpClient http, string orgUrl, string project)
     {
@@ -51,8 +43,8 @@ public sealed class WorkItemClient : IWorkItemClient
 
     private async Task<List<int>> GetIdsViaWiqlAsync(string areaPath, string? iterationPath, CancellationToken ct)
     {
-        var safeArea = ValidatePath(areaPath, nameof(areaPath));
-        var safeIter = string.IsNullOrEmpty(iterationPath) ? null : ValidatePath(iterationPath, nameof(iterationPath));
+        var safeArea = ValidateWiqlPath(areaPath, nameof(areaPath));
+        var safeIter = string.IsNullOrEmpty(iterationPath) ? null : ValidateWiqlPath(iterationPath, nameof(iterationPath));
 
         var wiql = $"SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '{WiqlLiteral(_project)}' " +
                    $"AND [System.AreaPath] UNDER '{WiqlLiteral(safeArea)}' " +
