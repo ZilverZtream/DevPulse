@@ -1,3 +1,4 @@
+using DevPulse.App;
 using DevPulse.Core.Models;
 using DevPulse.Core.Services;
 using DevPulse.App.Services;
@@ -34,7 +35,7 @@ public sealed class InboxEventsForm : Form
         _inboxName = inboxName;
         _boardForm = boardForm;
         InitializeComponent();
-        _ = LoadEventsAsync();
+        LoadEventsAsync().FireAndForget(nameof(LoadEventsAsync));
     }
 
     private void InitializeComponent()

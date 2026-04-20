@@ -1,3 +1,4 @@
+using DevPulse.App;
 using DevPulse.App.Services;
 using DevPulse.App.UI;
 using DevPulse.Core.Interfaces;
@@ -42,7 +43,7 @@ public sealed class BoardForm : Form
         _store = store;
         _settings = settings;
         InitializeComponent();
-        _ = LoadAsync();
+        LoadAsync().FireAndForget(nameof(LoadAsync));
     }
 
     private void InitializeComponent()
