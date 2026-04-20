@@ -1,17 +1,22 @@
 using System.Text.Json;
 using DevPulse.Core.Enums;
+using DevPulse.Core.Interfaces;
 using DevPulse.Core.Models;
-using DevPulse.Infrastructure.Persistence;
 using Serilog;
 
 namespace DevPulse.App.Services;
 
 public sealed class SettingsService
 {
-    private readonly SqliteStateStore _store;
+    private readonly IKvSettings _store;
+    private readonly IStateStore _renameStore;
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 
-    public SettingsService(SqliteStateStore store) => _store = store;
+    public SettingsService(IKvSettings store, IStateStore renameStore)
+    {
+        _store = store;
+        _renameStore = renameStore;
+    }
 
     // ── AppSettings ───────────────────────────────────────────────────────────
 
@@ -37,7 +42,17 @@ public sealed class SettingsService
     }
 
     public async Task SaveInboxDefinitionsAsync(List<InboxDefinition> inboxes, CancellationToken ct = default)
-        => await _store.SetSettingAsync("InboxDefinitions", JsonSerializer.Serialize(inboxes, Json), ct);
+    {
+        var oldInboxes = await GetInboxDefinitionsAsync(ct);
+        foreach (var oldInbox in oldInboxes)
+        {
+            var renamed = inboxes.FirstOrDefault(n =>
+                n.IsSystemInbox == oldInbox.IsSystemInbox && n.Order == oldInbox.Order && n.Name != oldInbox.Name);
+            if (renamed != null)
+                await _renameStore.RenameInboxAsync(oldInbox.Name, renamed.Name, ct);
+        }
+        await _store.SetSettingAsync("InboxDefinitions", JsonSerializer.Serialize(inboxes, Json), ct);
+    }
 
     // ── Board Columns ─────────────────────────────────────────────────────────
 

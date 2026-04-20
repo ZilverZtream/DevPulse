@@ -26,4 +26,6 @@ public interface IStateStore
     Task CleanStaleSnapshotsAsync(int retainDays = 30, CancellationToken ct = default);
 
     Task<int> GetUnreadCountForInboxAsync(string inboxName, CancellationToken ct = default);
+    Task MarkNotificationSentAsync(IEnumerable<string> eventIds, CancellationToken ct = default);
+    Task RenameInboxAsync(string oldName, string newName, CancellationToken ct = default);
 }

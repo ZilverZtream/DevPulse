@@ -7,7 +7,7 @@ using Serilog;
 
 namespace DevPulse.Infrastructure.Persistence;
 
-public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
+public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposable
 {
     private readonly SqliteConnection _conn;
     private readonly SemaphoreSlim _lock = new(1, 1);
@@ -200,6 +200,40 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
                     cmd.Parameters.AddWithValue($"@p{i}", chunk[i]);
                 await cmd.ExecuteNonQueryAsync(ct);
             }
+        }
+        finally { _lock.Release(); }
+    }
+
+    public async Task MarkNotificationSentAsync(IEnumerable<string> eventIds, CancellationToken ct = default)
+    {
+        var ids = eventIds.ToList();
+        if (ids.Count == 0) return;
+        await _lock.WaitAsync(ct);
+        try
+        {
+            foreach (var chunk in ids.Chunk(500))
+            {
+                await using var cmd = _conn.CreateCommand();
+                var paramNames = chunk.Select((_, i) => $"@p{i}").ToList();
+                cmd.CommandText = $"UPDATE events SET notification_sent = 1 WHERE event_id IN ({string.Join(",", paramNames)})";
+                for (int i = 0; i < chunk.Length; i++)
+                    cmd.Parameters.AddWithValue($"@p{i}", chunk[i]);
+                await NonQueryRetryAsync(cmd, ct);
+            }
+        }
+        finally { _lock.Release(); }
+    }
+
+    public async Task RenameInboxAsync(string oldName, string newName, CancellationToken ct = default)
+    {
+        await _lock.WaitAsync(ct);
+        try
+        {
+            await using var cmd = _conn.CreateCommand();
+            cmd.CommandText = "UPDATE events SET inbox_name = @newName WHERE inbox_name = @oldName";
+            cmd.Parameters.AddWithValue("@newName", newName);
+            cmd.Parameters.AddWithValue("@oldName", oldName);
+            await NonQueryRetryAsync(cmd, ct);
         }
         finally { _lock.Release(); }
     }
@@ -565,25 +599,29 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
         IsCurrentUserReviewer = r.GetInt32(r.GetOrdinal("is_current_user_reviewer")) == 1
     };
 
-    private static WorkItem ReadWorkItem(SqliteDataReader r) => new()
+    private static WorkItem ReadWorkItem(SqliteDataReader r)
     {
-        Id = r.GetInt32(r.GetOrdinal("id")),
-        Title = r.GetString(r.GetOrdinal("title")),
-        Type = (WorkItemType)r.GetInt32(r.GetOrdinal("item_type")),
-        State = r.GetString(r.GetOrdinal("state")),
-        BoardColumn = r.GetString(r.GetOrdinal("board_column")),
-        Priority = r.GetString(r.GetOrdinal("priority")),
-        AssignedToDisplayName = r.GetString(r.GetOrdinal("assigned_to_display")),
-        AssignedToCanonicalKey = r.GetString(r.GetOrdinal("assigned_to_canonical")),
-        AreaPath = r.GetString(r.GetOrdinal("area_path")),
-        IterationPath = r.GetString(r.GetOrdinal("iteration_path")),
-        WorkItemUrl = r.GetString(r.GetOrdinal("work_item_url")),
-        LinkedPullRequestId = r.IsDBNull(r.GetOrdinal("linked_pr_id")) ? null : r.GetString(r.GetOrdinal("linked_pr_id")),
-        StateChangedAtUtc = ParseStoredDate(r, "state_changed_at") ?? DateTimeOffset.MinValue,
-        DaysInCurrentState = r.GetInt32(r.GetOrdinal("days_in_state")),
-        AgingLevel = (AgingLevel)r.GetInt32(r.GetOrdinal("aging_level")),
-        DiscoveredAtUtc = ParseStoredDate(r, "discovered_at") ?? DateTimeOffset.MinValue
-    };
+        var stateChangedAt = ParseStoredDate(r, "state_changed_at") ?? DateTimeOffset.MinValue;
+        return new WorkItem
+        {
+            Id = r.GetInt32(r.GetOrdinal("id")),
+            Title = r.GetString(r.GetOrdinal("title")),
+            Type = (WorkItemType)r.GetInt32(r.GetOrdinal("item_type")),
+            State = r.GetString(r.GetOrdinal("state")),
+            BoardColumn = r.GetString(r.GetOrdinal("board_column")),
+            Priority = r.GetString(r.GetOrdinal("priority")),
+            AssignedToDisplayName = r.GetString(r.GetOrdinal("assigned_to_display")),
+            AssignedToCanonicalKey = r.GetString(r.GetOrdinal("assigned_to_canonical")),
+            AreaPath = r.GetString(r.GetOrdinal("area_path")),
+            IterationPath = r.GetString(r.GetOrdinal("iteration_path")),
+            WorkItemUrl = r.GetString(r.GetOrdinal("work_item_url")),
+            LinkedPullRequestId = r.IsDBNull(r.GetOrdinal("linked_pr_id")) ? null : r.GetString(r.GetOrdinal("linked_pr_id")),
+            StateChangedAtUtc = stateChangedAt,
+            DaysInCurrentState = Math.Max(0, (int)(DateTimeOffset.UtcNow - stateChangedAt).TotalDays),
+            AgingLevel = (AgingLevel)r.GetInt32(r.GetOrdinal("aging_level")),
+            DiscoveredAtUtc = ParseStoredDate(r, "discovered_at") ?? DateTimeOffset.MinValue
+        };
+    }
 
     public async ValueTask DisposeAsync()
     {

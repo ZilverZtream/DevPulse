@@ -33,7 +33,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     public TrayApplicationContext(SqliteStateStore store)
     {
         _store = store;
-        _settings = new SettingsService(store);
+        _settings = new SettingsService(store, store);
         _debugLog = new DebugLogService();
         _inboxView = new InboxViewService(store);
         _boardView = new BoardViewService();
