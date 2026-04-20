@@ -1,5 +1,6 @@
 using DevPulse.App.Services;
 using DevPulse.Core.Models;
+using DevPulse.Infrastructure.AzureDevOps;
 using DevPulse.Infrastructure.Security;
 
 namespace DevPulse.App.Forms;
@@ -297,14 +298,14 @@ public sealed class SettingsForm : Form
         _repoFilter.Text = _appSettings.RepositoryFilter;
         _currentUser.Text = _appSettings.CurrentUserCanonicalKey;
         _patBox.Text = SecretStore.LoadPat() ?? string.Empty;
-        _prInterval.Value = _appSettings.PrPollingIntervalMinutes;
-        _wiInterval.Value = _appSettings.WorkItemPollingIntervalMinutes;
+        _prInterval.Value = Math.Clamp(_appSettings.PrPollingIntervalMinutes, (int)_prInterval.Minimum, (int)_prInterval.Maximum);
+        _wiInterval.Value = Math.Clamp(_appSettings.WorkItemPollingIntervalMinutes, (int)_wiInterval.Minimum, (int)_wiInterval.Maximum);
         _refreshOnStartup.Checked = _appSettings.RefreshOnStartup;
         _botPatterns.Text = string.Join(", ", _appSettings.BotIdentityPatterns);
         _poQaGroup.Text = string.Join(", ", _appSettings.PoQaGroupCanonicalKeys);
         _areaPath.Text = _appSettings.AreaPath;
         _iterationPath.Text = _appSettings.IterationPath;
-        _maxEvents.Value = _appSettings.MaxEventsPerInbox;
+        _maxEvents.Value = Math.Clamp(_appSettings.MaxEventsPerInbox, (int)_maxEvents.Minimum, (int)_maxEvents.Maximum);
 
         var inboxes = await _settings.GetInboxDefinitionsAsync();
         _inboxList.Items.Clear();
@@ -408,12 +409,14 @@ public sealed class SettingsForm : Form
     {
         try
         {
+            var orgUrl = _orgUrl.Text.TrimEnd('/');
             var pat = _patBox.Text;
-            using var http = new System.Net.Http.HttpClient();
-            http.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Basic",
-                    Convert.ToBase64String(System.Text.Encoding.ASCII.GetBytes($":{pat}")));
-            var resp = await http.GetAsync($"{_orgUrl.Text.TrimEnd('/')}/_apis/projects?api-version=7.1");
+            using var handler = new AzureDevOpsAuthHandler(orgUrl, pat);
+            using var http = new System.Net.Http.HttpClient(handler, disposeHandler: false)
+            {
+                Timeout = TimeSpan.FromSeconds(10)
+            };
+            var resp = await http.GetAsync($"{orgUrl}/_apis/projects?api-version=7.1");
             if (resp.IsSuccessStatusCode)
                 MessageBox.Show("Connection successful!", "DevPulse", MessageBoxButtons.OK, MessageBoxIcon.Information);
             else
