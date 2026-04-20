@@ -51,11 +51,12 @@ public sealed class WorkItemClient : IWorkItemClient
         const int pageSize = 500;
         var allIds = new List<int>();
         var skip = 0;
+        var serializedBody = JsonSerializer.Serialize(new { query = wiql });
 
         while (true)
         {
             var url = $"{_orgUrl}/{Uri.EscapeDataString(_project)}/_apis/wit/wiql?$top={pageSize}&$skip={skip}&api-version={ApiVersions.WorkItemQueryLanguage}";
-            var content = new StringContent(JsonSerializer.Serialize(new { query = wiql }), Encoding.UTF8, "application/json");
+            var content = new StringContent(serializedBody, Encoding.UTF8, "application/json");
             var response = await AdoRetryHelper.PostWithRetryAsync(_http, url, content, ct);
 
             var body = await response.Content.ReadAsStringAsync(ct);
