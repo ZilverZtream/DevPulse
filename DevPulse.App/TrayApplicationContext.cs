@@ -152,7 +152,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     }
 
     private void RunBackground(Func<Task> op, string name)
-        => op().ContinueWith(t => Log.Error(t.Exception?.GetBaseException(), "Background op '{Op}' failed", name),
+        => Task.Run(() => op()).ContinueWith(t => Log.Error(t.Exception?.GetBaseException(), "Background op '{Op}' failed", name),
             CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
 
     private void ShowInbox(string name)

@@ -8,8 +8,11 @@ public sealed class EventNormalizer
 {
     public EventMeaning DeriveCommentMeaning(string messageText, string currentUserCanonicalKey)
     {
-        if (!string.IsNullOrEmpty(currentUserCanonicalKey) &&
-            messageText.Contains($"@{currentUserCanonicalKey}", StringComparison.OrdinalIgnoreCase))
+        var mentionHandle = currentUserCanonicalKey.Contains('@')
+            ? currentUserCanonicalKey.Split('@')[0]
+            : currentUserCanonicalKey;
+        if (!string.IsNullOrEmpty(mentionHandle) &&
+            messageText.Contains($"@{mentionHandle}", StringComparison.OrdinalIgnoreCase))
             return EventMeaning.Mention;
 
         return EventMeaning.Comment;

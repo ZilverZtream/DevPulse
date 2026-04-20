@@ -36,6 +36,9 @@ public sealed partial class WorkItemNormalizer
         var column = ResolveColumn(dto.State, columns);
         var aging = column != null ? ComputeAging(days, column) : AgingLevel.Fresh;
 
+        if (string.IsNullOrWhiteSpace(dto.AssignedToUniqueName) && !string.IsNullOrWhiteSpace(dto.AssignedToDisplayName))
+            Log.Warning("WorkItem {Id} has no UniqueName; using display name '{Name}' as canonical key — mutes may be orphaned on rename", dto.Id, dto.AssignedToDisplayName);
+
         return new WorkItem
         {
             Id = dto.Id,

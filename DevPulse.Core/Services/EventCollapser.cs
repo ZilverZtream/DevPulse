@@ -37,10 +37,10 @@ public sealed class EventCollapser
             }
         }
 
-        foreach (var (prId, group) in botGroups)
+        foreach (var (_, group) in botGroups)
             result.Add(CollapseGroup(group, PrEventSource.Bot, pollTime));
 
-        foreach (var (prId, group) in systemGroups)
+        foreach (var (_, group) in systemGroups)
             result.Add(CollapseGroup(group, PrEventSource.System, pollTime));
 
         return result.OrderBy(e => e.CreatedAtUtc).ToList();

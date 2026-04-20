@@ -14,9 +14,6 @@ public sealed class MuteService
     {
         foreach (var mute in activeMutes)
         {
-            if (mute.ExpiresAtUtc.HasValue && mute.ExpiresAtUtc.Value <= now)
-                continue;
-
             if (mute.Scope == MuteScope.PullRequest && mute.PrId == evt.PullRequestId)
                 return true;
 
