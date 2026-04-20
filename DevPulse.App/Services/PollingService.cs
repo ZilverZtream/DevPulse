@@ -174,6 +174,8 @@ public sealed class PollingService : PollingLoopBase
                 await _notifications.ShowAsync(evt);
         }
 
+        await _store.CleanStaleSnapshotsAsync(30, ct);
+
         var now = DateTimeOffset.UtcNow;
         await _store.SetLastSuccessfulPollAsync("prs", now, ct);
         _debugLog.UpdatePollStatus("prs", now, now.AddMinutes(appSettings.PrPollingIntervalMinutes), apiCallCount);

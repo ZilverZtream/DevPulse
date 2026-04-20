@@ -386,6 +386,25 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
         finally { _lock.Release(); }
     }
 
+    public async Task CleanStaleSnapshotsAsync(int retainDays = 30, CancellationToken ct = default)
+    {
+        await _lock.WaitAsync(ct);
+        try
+        {
+            await using var cmd = _conn.CreateCommand();
+            cmd.CommandText = """
+                DELETE FROM pr_snapshots
+                WHERE pr_id NOT IN (
+                    SELECT DISTINCT pull_request_id FROM events
+                    WHERE discovered_at_utc >= @cutoff
+                )
+                """;
+            cmd.Parameters.AddWithValue("@cutoff", DateTimeOffset.UtcNow.AddDays(-retainDays).ToString("O"));
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+        finally { _lock.Release(); }
+    }
+
     // ── KV Settings ───────────────────────────────────────────────────────────
 
     public async Task<string?> GetSettingAsync(string key, CancellationToken ct = default)
