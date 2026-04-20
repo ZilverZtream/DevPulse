@@ -5,6 +5,6 @@ public enum WatcherType
     Author,
     Repository,
     PrTitlePattern,
-    WorkItemType,
-    WorkItemState
+    ByWorkItemType,
+    ByWorkItemState
 }
