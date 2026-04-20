@@ -424,7 +424,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
     {
         EventId = r.GetString(r.GetOrdinal("event_id")),
         EventType = (DevOpsEventType)r.GetInt32(r.GetOrdinal("event_type")),
-        EventSource = (EventSource)r.GetInt32(r.GetOrdinal("event_source")),
+        EventSource = (PrEventSource)r.GetInt32(r.GetOrdinal("event_source")),
         EventMeaning = (EventMeaning)r.GetInt32(r.GetOrdinal("event_meaning")),
         InboxName = r.GetString(r.GetOrdinal("inbox_name")),
         IsCollapsed = r.GetInt32(r.GetOrdinal("is_collapsed")) == 1,

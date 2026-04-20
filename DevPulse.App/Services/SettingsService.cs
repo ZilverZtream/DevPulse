@@ -111,7 +111,7 @@ public sealed class SettingsService
             ShowNotifications = false,
             Rules =
             [
-                new() { EventSourceEquals = EventSource.Bot }
+                new() { EventSourceEquals = PrEventSource.Bot }
             ]
         },
         new()

@@ -6,7 +6,7 @@ public sealed class DevOpsEvent
 {
     public string EventId { get; set; } = string.Empty;
     public DevOpsEventType EventType { get; set; }
-    public EventSource EventSource { get; set; }
+    public PrEventSource EventSource { get; set; }
     public EventMeaning EventMeaning { get; set; }
     public string InboxName { get; set; } = string.Empty;
     public bool IsCollapsed { get; set; }

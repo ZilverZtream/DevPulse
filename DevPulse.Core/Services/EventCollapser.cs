@@ -19,13 +19,13 @@ public sealed class EventCollapser
 
         foreach (var evt in events)
         {
-            if (evt.EventSource == EventSource.Bot && evt.EventMeaning == EventMeaning.Comment)
+            if (evt.EventSource == PrEventSource.Bot && evt.EventMeaning == EventMeaning.Comment)
             {
                 if (!botGroups.TryGetValue(evt.PullRequestId, out var group))
                     botGroups[evt.PullRequestId] = group = [];
                 group.Add(evt);
             }
-            else if (evt.EventSource == EventSource.System)
+            else if (evt.EventSource == PrEventSource.System)
             {
                 if (!systemGroups.TryGetValue(evt.PullRequestId, out var group))
                     systemGroups[evt.PullRequestId] = group = [];
@@ -38,15 +38,15 @@ public sealed class EventCollapser
         }
 
         foreach (var (prId, group) in botGroups)
-            result.Add(CollapseGroup(group, EventSource.Bot, pollTime));
+            result.Add(CollapseGroup(group, PrEventSource.Bot, pollTime));
 
         foreach (var (prId, group) in systemGroups)
-            result.Add(CollapseGroup(group, EventSource.System, pollTime));
+            result.Add(CollapseGroup(group, PrEventSource.System, pollTime));
 
         return result.OrderBy(e => e.CreatedAtUtc).ToList();
     }
 
-    private DevOpsEvent CollapseGroup(List<DevOpsEvent> group, EventSource source, DateTimeOffset pollTime)
+    private DevOpsEvent CollapseGroup(List<DevOpsEvent> group, PrEventSource source, DateTimeOffset pollTime)
     {
         if (group.Count == 1) return group[0];
 

@@ -62,12 +62,12 @@ public sealed class RuleEngine
     private bool MatchesNeedsMyAttention(DevOpsEvent evt, AppSettings settings, IReadOnlyList<KeywordPack> packs)
     {
         if (!evt.IsCurrentUserReviewer) return false;
-        if (evt.EventSource == EventSource.Bot || evt.EventSource == EventSource.System) return false;
+        if (evt.EventSource == PrEventSource.Bot || evt.EventSource == PrEventSource.System) return false;
 
         if (evt.EventMeaning == EventMeaning.Blocked) return true;
         if (evt.EventMeaning == EventMeaning.Mention) return true;
 
-        if (evt.EventSource == EventSource.Human &&
+        if (evt.EventSource == PrEventSource.Human &&
             evt.EventMeaning == EventMeaning.Comment &&
             settings.PoQaGroupCanonicalKeys.Contains(evt.AuthorCanonicalKey, StringComparer.OrdinalIgnoreCase))
             return true;

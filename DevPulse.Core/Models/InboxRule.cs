@@ -5,7 +5,7 @@ namespace DevPulse.Core.Models;
 public sealed class InboxRule
 {
     public bool Enabled { get; set; } = true;
-    public EventSource? EventSourceEquals { get; set; }
+    public PrEventSource? EventSourceEquals { get; set; }
     public EventMeaning? EventMeaningEquals { get; set; }
     public string? AuthorEquals { get; set; }
     public string? AuthorContains { get; set; }

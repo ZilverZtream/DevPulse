@@ -31,7 +31,7 @@ public sealed class IdentityNormalizer
         return raw;
     }
 
-    public EventSource ClassifySource(IdentityRefDto identity)
+    public PrEventSource ClassifySource(IdentityRefDto identity)
     {
         var canonical = Normalize(identity);
         var display = identity.DisplayName;
@@ -40,9 +40,9 @@ public sealed class IdentityNormalizer
         {
             if (canonical.Contains(pattern, StringComparison.OrdinalIgnoreCase) ||
                 display.Contains(pattern, StringComparison.OrdinalIgnoreCase))
-                return EventSource.Bot;
+                return PrEventSource.Bot;
         }
 
-        return EventSource.Human;
+        return PrEventSource.Human;
     }
 }

@@ -40,6 +40,6 @@ public sealed class EventNormalizer
     public string BuildVoteEventId(int prId, string reviewerId, int vote, DateTimeOffset at)
         => $"pr:{prId}:reviewer:{reviewerId}:vote:{vote}:at:{at:yyyyMMddHHmmss}";
 
-    public string BuildCollapsedEventId(int prId, EventSource source, DateTimeOffset pollTime)
+    public string BuildCollapsedEventId(int prId, PrEventSource source, DateTimeOffset pollTime)
         => $"pr:{prId}:collapsed:{source}:poll:{pollTime:yyyyMMddHHmm}";
 }
