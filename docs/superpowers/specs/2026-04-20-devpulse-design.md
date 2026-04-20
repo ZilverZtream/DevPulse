@@ -61,6 +61,7 @@ DevPulse.sln
 │       ├── IdentityNormalizer.cs
 │       ├── EventCollapser.cs
 │       ├── MuteService.cs
+│       ├── InboxViewService.cs
 │       ├── BoardViewService.cs
 │       └── DebugLogService.cs
 ├── DevPulse.Infrastructure/
