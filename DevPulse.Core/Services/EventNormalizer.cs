@@ -6,13 +6,18 @@ namespace DevPulse.Core.Services;
 
 public sealed class EventNormalizer
 {
-    public EventMeaning DeriveCommentMeaning(string messageText, string currentUserCanonicalKey)
+    public EventMeaning DeriveCommentMeaning(string messageText, string currentUserCanonicalKey, string currentUserDisplayName = "")
     {
         var mentionHandle = currentUserCanonicalKey.Contains('@')
             ? currentUserCanonicalKey.Split('@')[0]
             : currentUserCanonicalKey;
+
         if (!string.IsNullOrEmpty(mentionHandle) &&
             messageText.Contains($"@{mentionHandle}", StringComparison.OrdinalIgnoreCase))
+            return EventMeaning.Mention;
+
+        if (!string.IsNullOrEmpty(currentUserDisplayName) &&
+            messageText.Contains($"@{currentUserDisplayName}", StringComparison.OrdinalIgnoreCase))
             return EventMeaning.Mention;
 
         return EventMeaning.Comment;
@@ -20,8 +25,11 @@ public sealed class EventNormalizer
 
     public EventMeaning DeriveVoteMeaning(int vote) => vote switch
     {
+        10  => EventMeaning.VoteApproved,
+        5   => EventMeaning.VoteApprovedWithSuggestions,
+        -5  => EventMeaning.VoteWaiting,
         -10 => EventMeaning.Blocked,
-        _ => EventMeaning.VoteChanged
+        _   => EventMeaning.VoteChanged
     };
 
     public EventMeaning DeriveStatusMeaning(string status) => status.ToLowerInvariant() switch

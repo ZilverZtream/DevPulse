@@ -9,5 +9,8 @@ public enum EventMeaning
     VoteChanged,
     Blocked,
     ReviewerAdded,
-    Mention
+    Mention,
+    VoteApproved,
+    VoteApprovedWithSuggestions,
+    VoteWaiting
 }
