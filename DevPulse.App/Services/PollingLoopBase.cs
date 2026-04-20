@@ -24,7 +24,11 @@ public abstract class PollingLoopBase : IDisposable, IAsyncDisposable
         _loopTask = RunLoopAsync(TimeSpan.FromMinutes(clamped), _cts.Token);
     }
 
-    public Task RefreshNowAsync() => ExecuteSafeAsync(_cts.Token);
+    public Task RefreshNowAsync()
+    {
+        if (Volatile.Read(ref _disposed) != 0) return Task.CompletedTask;
+        return ExecuteSafeAsync(_cts.Token);
+    }
 
     private async Task RunLoopAsync(TimeSpan interval, CancellationToken ct)
     {
@@ -79,6 +83,5 @@ public abstract class PollingLoopBase : IDisposable, IAsyncDisposable
     public void Dispose()
     {
         DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(10));
-        GC.SuppressFinalize(this);
     }
 }
