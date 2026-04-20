@@ -3,6 +3,7 @@ using DevPulse.App.Services;
 using DevPulse.App.UI;
 using DevPulse.Core.Interfaces;
 using DevPulse.Core.Services;
+using DevPulse.Infrastructure.AzureDevOps;
 using DevPulse.Infrastructure.Notifications;
 using DevPulse.Infrastructure.Persistence;
 using DevPulse.Infrastructure.Security;
@@ -51,7 +52,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        var httpClient = CreateHttpClient(patResult.Value!);
+        var httpClient = CreateHttpClient(appSettings.OrganizationUrl, patResult.Value!);
         var notifications = new WindowsToastNotificationService();
 
         var adoClient = new DevPulse.Infrastructure.AzureDevOps.AzureDevOpsClient(
@@ -183,13 +184,10 @@ public sealed class TrayApplicationContext : ApplicationContext
     private static bool IsConfigured(DevPulse.Core.Models.AppSettings s, PatLoadResult patResult)
         => !string.IsNullOrEmpty(s.OrganizationUrl) && !string.IsNullOrEmpty(s.Project) && patResult.IsOk;
 
-    private static System.Net.Http.HttpClient CreateHttpClient(string pat)
+    private static System.Net.Http.HttpClient CreateHttpClient(string orgUrl, string pat)
     {
-        var client = new System.Net.Http.HttpClient();
+        var client = new System.Net.Http.HttpClient(new AzureDevOpsAuthHandler(orgUrl, pat));
         client.Timeout = TimeSpan.FromSeconds(30);
-        client.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Basic",
-                Convert.ToBase64String(System.Text.Encoding.ASCII.GetBytes($":{pat}")));
         return client;
     }
 

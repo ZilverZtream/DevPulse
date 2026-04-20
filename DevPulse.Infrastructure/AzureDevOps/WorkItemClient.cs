@@ -21,6 +21,18 @@ public sealed class WorkItemClient : IWorkItemClient
     private const string Fields = "System.Id,System.Title,System.WorkItemType,System.State,Microsoft.VSTS.Common.Priority," +
                                   "System.AssignedTo,System.AreaPath,System.IterationPath,System.StateChangeDate,System.TeamProject";
 
+    private static readonly System.Text.RegularExpressions.Regex SafePathPattern =
+        new(@"^[\w\s\\/\-\.]+$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static string ValidatePath(string value, string paramName)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            throw new ArgumentException($"Path '{paramName}' cannot be empty.", paramName);
+        if (!SafePathPattern.IsMatch(value))
+            throw new ArgumentException($"Path '{paramName}' contains invalid characters: {value}", paramName);
+        return value;
+    }
+
     public WorkItemClient(HttpClient http, string orgUrl, string project)
     {
         _http = http;
@@ -39,12 +51,15 @@ public sealed class WorkItemClient : IWorkItemClient
 
     private async Task<List<int>> GetIdsViaWiqlAsync(string areaPath, string? iterationPath, CancellationToken ct)
     {
+        var safeArea = ValidatePath(areaPath, nameof(areaPath));
+        var safeIter = string.IsNullOrEmpty(iterationPath) ? null : ValidatePath(iterationPath, nameof(iterationPath));
+
         var wiql = $"SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '{WiqlLiteral(_project)}' " +
-                   $"AND [System.AreaPath] UNDER '{WiqlLiteral(areaPath)}' " +
-                   (string.IsNullOrEmpty(iterationPath) ? "" : $"AND [System.IterationPath] UNDER '{WiqlLiteral(iterationPath)}' ") +
+                   $"AND [System.AreaPath] UNDER '{WiqlLiteral(safeArea)}' " +
+                   (safeIter == null ? "" : $"AND [System.IterationPath] UNDER '{WiqlLiteral(safeIter)}' ") +
                    "AND [System.State] <> 'Removed' ORDER BY [System.ChangedDate] DESC";
 
-        var url = $"{_orgUrl}/{Uri.EscapeDataString(_project)}/_apis/wit/wiql?api-version={ApiVersions.WorkItemQueryLanguage}";
+        var url = $"{_orgUrl}/{Uri.EscapeDataString(_project)}/_apis/wit/wiql?$top=500&api-version={ApiVersions.WorkItemQueryLanguage}";
         var content = new StringContent(JsonSerializer.Serialize(new { query = wiql }), Encoding.UTF8, "application/json");
         var response = await PostWithRetryAsync(_http, url, content, ct);
 
