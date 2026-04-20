@@ -48,13 +48,26 @@ public sealed class WorkItemClient : IWorkItemClient
                    (safeIter == null ? "" : $"AND [System.IterationPath] UNDER '{WiqlLiteral(safeIter)}' ") +
                    "AND [System.State] <> 'Removed' ORDER BY [System.ChangedDate] DESC";
 
-        var url = $"{_orgUrl}/{Uri.EscapeDataString(_project)}/_apis/wit/wiql?$top=500&api-version={ApiVersions.WorkItemQueryLanguage}";
-        var content = new StringContent(JsonSerializer.Serialize(new { query = wiql }), Encoding.UTF8, "application/json");
-        var response = await AdoRetryHelper.PostWithRetryAsync(_http, url, content, ct);
+        const int pageSize = 500;
+        var allIds = new List<int>();
+        var skip = 0;
 
-        var body = await response.Content.ReadAsStringAsync(ct);
-        var result = JsonSerializer.Deserialize<WiqlResult>(body, JsonOpts);
-        return result?.WorkItems?.Select(w => w.Id).ToList() ?? [];
+        while (true)
+        {
+            var url = $"{_orgUrl}/{Uri.EscapeDataString(_project)}/_apis/wit/wiql?$top={pageSize}&$skip={skip}&api-version={ApiVersions.WorkItemQueryLanguage}";
+            var content = new StringContent(JsonSerializer.Serialize(new { query = wiql }), Encoding.UTF8, "application/json");
+            var response = await AdoRetryHelper.PostWithRetryAsync(_http, url, content, ct);
+
+            var body = await response.Content.ReadAsStringAsync(ct);
+            var result = JsonSerializer.Deserialize<WiqlResult>(body, JsonOpts);
+            var page = result?.WorkItems?.Select(w => w.Id).ToList() ?? [];
+
+            allIds.AddRange(page);
+            if (page.Count < pageSize) break;
+            skip += pageSize;
+        }
+
+        return allIds;
     }
 
     private async Task<List<WorkItemDto>> FetchBatchAsync(List<int> ids, CancellationToken ct)
