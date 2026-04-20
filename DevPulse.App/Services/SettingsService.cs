@@ -2,6 +2,7 @@ using System.Text.Json;
 using DevPulse.Core.Enums;
 using DevPulse.Core.Models;
 using DevPulse.Infrastructure.Persistence;
+using Serilog;
 
 namespace DevPulse.App.Services;
 
@@ -17,7 +18,9 @@ public sealed class SettingsService
     public async Task<AppSettings> GetAppSettingsAsync(CancellationToken ct = default)
     {
         var json = await _store.GetSettingAsync("AppSettings", ct);
-        return json == null ? new AppSettings() : JsonSerializer.Deserialize<AppSettings>(json, Json) ?? new AppSettings();
+        if (json == null) return new AppSettings();
+        try { return JsonSerializer.Deserialize<AppSettings>(json, Json) ?? new AppSettings(); }
+        catch (JsonException ex) { Log.Warning(ex, "AppSettings JSON corrupt; returning defaults"); return new AppSettings(); }
     }
 
     public async Task SaveAppSettingsAsync(AppSettings settings, CancellationToken ct = default)
@@ -28,7 +31,9 @@ public sealed class SettingsService
     public async Task<List<InboxDefinition>> GetInboxDefinitionsAsync(CancellationToken ct = default)
     {
         var json = await _store.GetSettingAsync("InboxDefinitions", ct);
-        return json == null ? DefaultInboxes() : JsonSerializer.Deserialize<List<InboxDefinition>>(json, Json) ?? DefaultInboxes();
+        if (json == null) return DefaultInboxes();
+        try { return JsonSerializer.Deserialize<List<InboxDefinition>>(json, Json) ?? DefaultInboxes(); }
+        catch (JsonException ex) { Log.Warning(ex, "InboxDefinitions JSON corrupt; returning defaults"); return DefaultInboxes(); }
     }
 
     public async Task SaveInboxDefinitionsAsync(List<InboxDefinition> inboxes, CancellationToken ct = default)
@@ -39,7 +44,9 @@ public sealed class SettingsService
     public async Task<List<BoardColumnDefinition>> GetBoardColumnsAsync(CancellationToken ct = default)
     {
         var json = await _store.GetSettingAsync("BoardColumns", ct);
-        return json == null ? DefaultBoardColumns() : JsonSerializer.Deserialize<List<BoardColumnDefinition>>(json, Json) ?? DefaultBoardColumns();
+        if (json == null) return DefaultBoardColumns();
+        try { return JsonSerializer.Deserialize<List<BoardColumnDefinition>>(json, Json) ?? DefaultBoardColumns(); }
+        catch (JsonException ex) { Log.Warning(ex, "BoardColumns JSON corrupt; returning defaults"); return DefaultBoardColumns(); }
     }
 
     public async Task SaveBoardColumnsAsync(List<BoardColumnDefinition> columns, CancellationToken ct = default)
@@ -50,7 +57,9 @@ public sealed class SettingsService
     public async Task<List<KeywordPack>> GetKeywordPacksAsync(CancellationToken ct = default)
     {
         var json = await _store.GetSettingAsync("KeywordPacks", ct);
-        return json == null ? DefaultKeywordPacks() : JsonSerializer.Deserialize<List<KeywordPack>>(json, Json) ?? DefaultKeywordPacks();
+        if (json == null) return DefaultKeywordPacks();
+        try { return JsonSerializer.Deserialize<List<KeywordPack>>(json, Json) ?? DefaultKeywordPacks(); }
+        catch (JsonException ex) { Log.Warning(ex, "KeywordPacks JSON corrupt; returning defaults"); return DefaultKeywordPacks(); }
     }
 
     public async Task SaveKeywordPacksAsync(List<KeywordPack> packs, CancellationToken ct = default)
@@ -61,7 +70,9 @@ public sealed class SettingsService
     public async Task<List<IdentityAlias>> GetIdentityAliasesAsync(CancellationToken ct = default)
     {
         var json = await _store.GetSettingAsync("IdentityAliases", ct);
-        return json == null ? [] : JsonSerializer.Deserialize<List<IdentityAlias>>(json, Json) ?? [];
+        if (json == null) return [];
+        try { return JsonSerializer.Deserialize<List<IdentityAlias>>(json, Json) ?? []; }
+        catch (JsonException ex) { Log.Warning(ex, "IdentityAliases JSON corrupt; returning empty"); return []; }
     }
 
     public async Task SaveIdentityAliasesAsync(List<IdentityAlias> aliases, CancellationToken ct = default)
@@ -72,7 +83,9 @@ public sealed class SettingsService
     public async Task<List<Watcher>> GetWatchersAsync(CancellationToken ct = default)
     {
         var json = await _store.GetSettingAsync("Watchers", ct);
-        return json == null ? [] : JsonSerializer.Deserialize<List<Watcher>>(json, Json) ?? [];
+        if (json == null) return [];
+        try { return JsonSerializer.Deserialize<List<Watcher>>(json, Json) ?? []; }
+        catch (JsonException ex) { Log.Warning(ex, "Watchers JSON corrupt; returning empty"); return []; }
     }
 
     public async Task SaveWatchersAsync(List<Watcher> watchers, CancellationToken ct = default)
@@ -105,7 +118,7 @@ public sealed class SettingsService
         },
         new()
         {
-            Name = "Code Rabbit",
+            Name = "CodeRabbit",
             Order = 1,
             IsEnabled = true,
             ShowNotifications = false,

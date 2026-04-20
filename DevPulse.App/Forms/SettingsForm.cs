@@ -293,6 +293,7 @@ public sealed class SettingsForm : Form
     private async Task LoadSettingsAsync()
     {
         _appSettings = await _settings.GetAppSettingsAsync();
+        if (IsDisposed) return;
         _orgUrl.Text = _appSettings.OrganizationUrl;
         _project.Text = _appSettings.Project;
         _repoFilter.Text = _appSettings.RepositoryFilter;
@@ -308,16 +309,19 @@ public sealed class SettingsForm : Form
         _maxEvents.Value = Math.Clamp(_appSettings.MaxEventsPerInbox, (int)_maxEvents.Minimum, (int)_maxEvents.Maximum);
 
         var inboxes = await _settings.GetInboxDefinitionsAsync();
+        if (IsDisposed) return;
         _inboxList.Items.Clear();
         foreach (var i in inboxes.OrderBy(x => x.Order))
             _inboxList.Items.Add(i.Name);
 
         var aliases = await _settings.GetIdentityAliasesAsync();
+        if (IsDisposed) return;
         _aliasGrid.Rows.Clear();
         foreach (var a in aliases)
             _aliasGrid.Rows.Add(a.CanonicalKey, string.Join(", ", a.Variants));
 
         var columns = await _settings.GetBoardColumnsAsync();
+        if (IsDisposed) return;
         _columnsGrid.Rows.Clear();
         foreach (var c in columns.OrderBy(x => x.Order))
             _columnsGrid.Rows.Add(c.Name, string.Join(", ", c.MappedStates), c.AgingDaysWarning, c.AgingDaysStale);
@@ -363,7 +367,7 @@ public sealed class SettingsForm : Form
             var canon = row.Cells["canonical"].Value?.ToString() ?? string.Empty;
             var variants = row.Cells["variants"].Value?.ToString() ?? string.Empty;
             if (!string.IsNullOrEmpty(canon))
-                aliases.Add(new IdentityAlias { CanonicalKey = canon, Variants = [.. variants.Split(',', StringSplitOptions.TrimEntries)] });
+                aliases.Add(new IdentityAlias { CanonicalKey = canon, Variants = [.. variants.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)] });
         }
         await _settings.SaveIdentityAliasesAsync(aliases);
 
@@ -416,7 +420,8 @@ public sealed class SettingsForm : Form
             {
                 Timeout = TimeSpan.FromSeconds(10)
             };
-            var resp = await http.GetAsync($"{orgUrl}/_apis/projects?api-version=7.1");
+            const string adoApiVersion = "7.1";
+            var resp = await http.GetAsync($"{orgUrl}/_apis/projects?api-version={adoApiVersion}");
             if (resp.IsSuccessStatusCode)
                 MessageBox.Show("Connection successful!", "DevPulse", MessageBoxButtons.OK, MessageBoxIcon.Information);
             else
