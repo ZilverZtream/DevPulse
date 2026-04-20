@@ -44,9 +44,9 @@ public sealed class RuleEngine
             }
         }
 
-        // 4. Fallback inbox (last enabled non-system inbox with no rules)
+        // 4. Fallback inbox (last enabled non-system inbox)
         var fallback = inboxes
-            .Where(i => !i.IsSystemInbox && i.IsEnabled && i.Rules.Count == 0)
+            .Where(i => !i.IsSystemInbox && i.IsEnabled)
             .OrderBy(i => i.Order)
             .LastOrDefault();
 

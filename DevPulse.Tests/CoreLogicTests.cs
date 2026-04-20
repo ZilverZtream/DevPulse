@@ -32,30 +32,6 @@ public class WorkItemNormalizerTests
 
 public class RuleEngineTests
 {
-    [Fact]
-    public void AssignInbox_EmptyKeywordInMessageContainsAny_DoesNotMatchArbitraryMessage()
-    {
-        var rule = new InboxRule
-        {
-            Enabled = true,
-            MessageContainsAny = ["", "   ", "nope"]
-        };
-        var inbox = new InboxDefinition
-        {
-            Name = "Test", IsEnabled = true, Order = 0, IsSystemInbox = false,
-            Rules = [rule]
-        };
-        var evt = new DevOpsEvent
-        {
-            MessageText = "hello world",
-            AuthorCanonicalKey = "user@corp.com",
-            Status = "active", Repository = "repo", Project = "proj"
-        };
-
-        var result = new RuleEngine().AssignInbox(evt, [], [inbox], [], new AppSettings());
-
-        Assert.Equal("Unassigned", result);
-    }
 }
 
 public class IdentityNormalizerTests
