@@ -132,7 +132,6 @@ public sealed class BoardForm : Form
         _columns = await _settings.GetBoardColumnsAsync();
         _appSettings = await _settings.GetAppSettingsAsync();
 
-        // Populate assignee dropdown
         var assignees = _allItems
             .Where(i => !string.IsNullOrEmpty(i.AssignedToDisplayName))
             .Select(i => i.AssignedToDisplayName)
@@ -140,14 +139,17 @@ public sealed class BoardForm : Form
             .OrderBy(n => n)
             .ToList();
 
-        if (InvokeRequired) { BeginInvoke(LoadAsync); return; }
+        void ApplyUi()
+        {
+            _assigneeFilter.Items.Clear();
+            _assigneeFilter.Items.Add("All assignees");
+            foreach (var a in assignees) _assigneeFilter.Items.Add(a);
+            if (_assigneeFilter.SelectedIndex < 0) _assigneeFilter.SelectedIndex = 0;
+            ApplyFilters();
+        }
 
-        _assigneeFilter.Items.Clear();
-        _assigneeFilter.Items.Add("All assignees");
-        foreach (var a in assignees) _assigneeFilter.Items.Add(a);
-        if (_assigneeFilter.SelectedIndex < 0) _assigneeFilter.SelectedIndex = 0;
-
-        ApplyFilters();
+        if (InvokeRequired) Invoke(ApplyUi);
+        else ApplyUi();
     }
 
     private void ApplyFilters()
