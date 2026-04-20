@@ -302,6 +302,11 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
         await _lock.WaitAsync(ct);
         try
         {
+            await using var purge = _conn.CreateCommand();
+            purge.CommandText = "DELETE FROM mute_entries WHERE expires_at IS NOT NULL AND expires_at <= @now";
+            purge.Parameters.AddWithValue("@now", DateTimeOffset.UtcNow.ToString("O"));
+            await purge.ExecuteNonQueryAsync(ct);
+
             await using var cmd = _conn.CreateCommand();
             cmd.CommandText = "SELECT scope, key, expires_at, pr_id, author_key FROM mute_entries";
             await using var reader = await cmd.ExecuteReaderAsync(ct);
@@ -310,11 +315,9 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
             var ordPrId = reader.GetOrdinal("pr_id");
             var ordAuthorKey = reader.GetOrdinal("author_key");
             var list = new List<MuteEntry>();
-            var now = DateTimeOffset.UtcNow;
             while (await reader.ReadAsync(ct))
             {
                 var exp = reader.IsDBNull(ordExp) ? (DateTimeOffset?)null : DateTimeOffset.Parse(reader.GetString(ordExp));
-                if (exp.HasValue && exp.Value <= now) continue;
                 list.Add(new MuteEntry
                 {
                     Scope = (MuteScope)reader.GetInt32(ordScope),
