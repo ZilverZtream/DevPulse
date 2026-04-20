@@ -34,7 +34,7 @@ public sealed class IdentityNormalizer
     public PrEventSource ClassifySource(IdentityRefDto identity)
     {
         var canonical = Normalize(identity);
-        var display = identity.DisplayName;
+        var display = identity.DisplayName ?? string.Empty;
 
         foreach (var pattern in _botPatterns)
         {

@@ -44,9 +44,9 @@ public sealed class RuleEngine
             }
         }
 
-        // 4. Fallback inbox (last enabled non-system inbox, expected to have no conditions)
+        // 4. Fallback inbox (last enabled non-system inbox with no rules)
         var fallback = inboxes
-            .Where(i => !i.IsSystemInbox && i.IsEnabled)
+            .Where(i => !i.IsSystemInbox && i.IsEnabled && i.Rules.Count == 0)
             .OrderBy(i => i.Order)
             .LastOrDefault();
 
@@ -140,9 +140,14 @@ public sealed class RuleEngine
         {
             var pack = packs.FirstOrDefault(p => p.Name.Equals(item, StringComparison.OrdinalIgnoreCase));
             if (pack != null)
-                foreach (var kw in pack.Keywords) yield return kw;
-            else
+            {
+                foreach (var kw in pack.Keywords)
+                    if (!string.IsNullOrWhiteSpace(kw)) yield return kw;
+            }
+            else if (!string.IsNullOrWhiteSpace(item))
+            {
                 yield return item;
+            }
         }
     }
 

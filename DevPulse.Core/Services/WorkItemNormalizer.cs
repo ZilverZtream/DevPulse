@@ -32,7 +32,7 @@ public sealed partial class WorkItemNormalizer
             stateChangedAt = DateTimeOffset.UtcNow;
         }
 
-        var days = (int)(now - stateChangedAt).TotalDays;
+        var days = Math.Max(0, (int)(now - stateChangedAt).TotalDays);
         var column = ResolveColumn(dto.State, columns);
         var aging = column != null ? ComputeAging(days, column) : AgingLevel.Fresh;
 
