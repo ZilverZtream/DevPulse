@@ -106,7 +106,11 @@ public sealed class BoardForm : Form
 
         var btnRefresh = DarkButton("⟳ Refresh");
         btnRefresh.Left = x + 8;
-        btnRefresh.Click += async (_, _) => await LoadAsync();
+        btnRefresh.Click += async (_, _) =>
+        {
+            try { await LoadAsync(); }
+            catch (Exception ex) { Serilog.Log.Error(ex, "BoardForm: Refresh failed"); }
+        };
         _toolbar.Controls.Add(btnRefresh);
 
         _boardPanel = new Panel
@@ -179,7 +183,7 @@ public sealed class BoardForm : Form
         _boardPanel.SuspendLayout();
         _boardPanel.Controls.Clear();
 
-        var grouped = _boardService.GroupByColumn(_allItems, _columns);
+        var grouped = _boardService.GroupByColumn(filteredItems, _columns);
         int x = 8;
         int colIndex = 0;
 

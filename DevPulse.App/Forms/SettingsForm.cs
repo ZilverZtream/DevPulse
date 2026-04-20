@@ -35,7 +35,11 @@ public sealed class SettingsForm : Form
     {
         _settings = settings;
         InitializeComponent();
-        _ = LoadSettingsAsync();
+        _ = LoadSettingsAsync().ContinueWith(
+            t => Serilog.Log.Error(t.Exception?.GetBaseException(), "SettingsForm: LoadSettings failed"),
+            System.Threading.CancellationToken.None,
+            System.Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted,
+            System.Threading.Tasks.TaskScheduler.Default);
     }
 
     private void InitializeComponent()
@@ -73,7 +77,15 @@ public sealed class SettingsForm : Form
             ForeColor = Color.White,
             FlatAppearance = { BorderSize = 0 }
         };
-        btnSave.Click += async (_, _) => await SaveSettingsAsync();
+        btnSave.Click += async (_, _) =>
+        {
+            try { await SaveSettingsAsync(); }
+            catch (Exception ex)
+            {
+                Serilog.Log.Error(ex, "SettingsForm: Save failed");
+                MessageBox.Show($"Save failed: {ex.Message}", "DevPulse", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        };
 
         Controls.Add(tabs);
         Controls.Add(btnSave);
@@ -97,7 +109,15 @@ public sealed class SettingsForm : Form
         AddRow(layout, "Personal Access Token:", _patBox);
 
         var btnTest = new Button { Text = "Test connection", FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(50, 80, 120), ForeColor = Color.White, Height = 28 };
-        btnTest.Click += async (_, _) => await TestConnectionAsync();
+        btnTest.Click += async (_, _) =>
+        {
+            try { await TestConnectionAsync(); }
+            catch (Exception ex)
+            {
+                Serilog.Log.Error(ex, "SettingsForm: TestConnection failed");
+                MessageBox.Show($"Connection test failed: {ex.Message}", "DevPulse", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        };
         layout.Controls.Add(new Label(), 0, layout.RowCount);
         layout.Controls.Add(btnTest, 1, layout.RowCount - 1);
 
@@ -304,6 +324,19 @@ public sealed class SettingsForm : Form
 
     private async Task SaveSettingsAsync()
     {
+        var errors = new List<string>();
+        if (string.IsNullOrWhiteSpace(_orgUrl.Text))
+            errors.Add("Organization URL is required.");
+        if (string.IsNullOrWhiteSpace(_project.Text))
+            errors.Add("Project name is required.");
+        if (string.IsNullOrWhiteSpace(_currentUser.Text))
+            errors.Add("Your email (canonical key) is required.");
+        if (errors.Count > 0)
+        {
+            MessageBox.Show(string.Join("\n", errors), "DevPulse — Validation", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
         _appSettings.OrganizationUrl = _orgUrl.Text.Trim();
         _appSettings.Project = _project.Text.Trim();
         _appSettings.RepositoryFilter = _repoFilter.Text.Trim();
@@ -354,7 +387,11 @@ public sealed class SettingsForm : Form
     {
         var selectedName = _inboxList.SelectedItem?.ToString();
         if (selectedName == null) return;
-        _ = LoadInboxRulesAsync(selectedName);
+        _ = LoadInboxRulesAsync(selectedName).ContinueWith(
+            t => Serilog.Log.Error(t.Exception?.GetBaseException(), "SettingsForm: LoadInboxRules failed"),
+            System.Threading.CancellationToken.None,
+            System.Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted,
+            System.Threading.Tasks.TaskScheduler.Default);
     }
 
     private async Task LoadInboxRulesAsync(string inboxName)
