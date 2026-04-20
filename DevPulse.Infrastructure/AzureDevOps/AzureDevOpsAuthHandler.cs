@@ -15,7 +15,7 @@ public sealed class AzureDevOpsAuthHandler : DelegatingHandler
         : base(new HttpClientHandler())
     {
         _adoHost = new Uri(orgUrl.TrimEnd('/')).Host;
-        var encoded = Convert.ToBase64String(System.Text.Encoding.ASCII.GetBytes($":{pat}"));
+        var encoded = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($":{pat}"));
         _authHeader = new AuthenticationHeaderValue("Basic", encoded);
     }
 

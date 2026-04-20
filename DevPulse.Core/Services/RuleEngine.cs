@@ -1,5 +1,6 @@
 using DevPulse.Core.Enums;
 using DevPulse.Core.Models;
+using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 
 namespace DevPulse.Core.Services;
@@ -153,10 +154,14 @@ public sealed class RuleEngine
         }
     }
 
+    private static readonly ConcurrentDictionary<string, Regex> GlobCache = new();
+
     private static bool MatchesGlob(string text, string pattern)
     {
-        var regex = "^" + Regex.Escape(pattern).Replace(@"\*", ".*").Replace(@"\?", ".") + "$";
-        return Regex.IsMatch(text, regex, RegexOptions.IgnoreCase);
+        var regex = GlobCache.GetOrAdd(pattern, static p =>
+            new Regex("^" + Regex.Escape(p).Replace(@"\*", ".*").Replace(@"\?", ".") + "$",
+                RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1)));
+        return regex.IsMatch(text);
     }
 
     private static string BuildRuleDescription(InboxRule rule)

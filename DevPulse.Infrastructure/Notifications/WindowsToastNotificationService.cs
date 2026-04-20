@@ -41,7 +41,7 @@ public sealed class WindowsToastNotificationService : INotificationService
 
     private static string BuildBody(DevOpsEvent evt)
     {
-        if (evt.IsCollapsed && evt.CollapsedCount > 1)
+        if (evt.IsCollapsed)
             return $"{evt.AuthorDisplayName} added {evt.CollapsedCount} comments on PR #{evt.PullRequestId}";
 
         var msg = evt.MessageText.Length > 80 ? evt.MessageText[..80] + "…" : evt.MessageText;
