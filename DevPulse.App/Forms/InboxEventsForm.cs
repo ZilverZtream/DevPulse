@@ -7,7 +7,7 @@ using Serilog;
 
 namespace DevPulse.App.Forms;
 
-public sealed class InboxEventsForm : Form
+public sealed partial class InboxEventsForm : Form
 {
     private static readonly Color DarkBg = Color.FromArgb(30, 30, 46);
     private static readonly Color CardBg = Color.FromArgb(50, 50, 74);
@@ -21,7 +21,6 @@ public sealed class InboxEventsForm : Form
     private readonly BoardForm? _boardForm;
     private readonly CancellationTokenSource _formCts = new();
 
-    private ListView _listView = null!;
     private bool _loading;
 
     public InboxEventsForm(
@@ -37,60 +36,21 @@ public sealed class InboxEventsForm : Form
         _inboxName = inboxName;
         _boardForm = boardForm;
         Disposed += (_, _) => { _formCts.Cancel(); _formCts.Dispose(); };
-        BuildUi();
+        InitializeComponent();
+        Text = $"DevPulse — {_inboxName}";
         LoadEventsAsync().FireAndForget(nameof(LoadEventsAsync));
     }
 
-    private void BuildUi()
+    private async void BtnMarkAll_Click(object? sender, EventArgs e)
     {
-        Text = $"DevPulse — {_inboxName}";
-        Size = new Size(820, 600);
-        BackColor = DarkBg;
-        ForeColor = TextPrimary;
-        StartPosition = FormStartPosition.CenterScreen;
-        Font = new Font("Segoe UI", 9f);
+        try { await MarkAllReadAsync(); }
+        catch (Exception ex) { Log.Error(ex, "Mark all read failed"); }
+    }
 
-        var toolbar = new Panel { Height = 36, Dock = DockStyle.Top, BackColor = Color.FromArgb(42, 42, 60), Padding = new Padding(6, 4, 6, 4) };
-
-        var btnMarkAll = DarkButton("Mark all as read");
-        btnMarkAll.Click += async (_, _) =>
-        {
-            try { await MarkAllReadAsync(); }
-            catch (Exception ex) { Log.Error(ex, "Mark all read failed"); }
-        };
-
-        var btnRefresh = DarkButton("Refresh");
-        btnRefresh.Click += async (_, _) =>
-        {
-            try { await LoadEventsAsync(); }
-            catch (Exception ex) { Log.Error(ex, "Inbox refresh failed"); }
-        };
-        btnRefresh.Left = btnMarkAll.Right + 8;
-
-        toolbar.Controls.AddRange([btnMarkAll, btnRefresh]);
-
-        _listView = new ListView
-        {
-            Dock = DockStyle.Fill,
-            View = View.Details,
-            FullRowSelect = true,
-            GridLines = false,
-            BackColor = DarkBg,
-            ForeColor = TextPrimary,
-            Font = new Font("Segoe UI", 9f),
-            BorderStyle = BorderStyle.None
-        };
-        _listView.Columns.Add("", 24);
-        _listView.Columns.Add("PR", 60);
-        _listView.Columns.Add("Title", 240);
-        _listView.Columns.Add("Author", 160);
-        _listView.Columns.Add("Summary", 220);
-        _listView.Columns.Add("Time", 110);
-
-        _listView.MouseDoubleClick += OnDoubleClick;
-        _listView.MouseClick += OnRightClick;
-
-        Controls.AddRange([_listView, toolbar]);
+    private async void BtnRefresh_Click(object? sender, EventArgs e)
+    {
+        try { await LoadEventsAsync(); }
+        catch (Exception ex) { Log.Error(ex, "Inbox refresh failed"); }
     }
 
     private async Task LoadEventsAsync()
@@ -227,18 +187,4 @@ public sealed class InboxEventsForm : Form
         await LoadEventsAsync();
     }
 
-    private static Button DarkButton(string text)
-    {
-        return new Button
-        {
-            Text = text,
-            FlatStyle = FlatStyle.Flat,
-            BackColor = Color.FromArgb(60, 60, 90),
-            ForeColor = Color.FromArgb(220, 220, 235),
-            Height = 26,
-            AutoSize = true,
-            Padding = new Padding(8, 0, 8, 0),
-            FlatAppearance = { BorderColor = Color.FromArgb(80, 80, 110) }
-        };
-    }
 }

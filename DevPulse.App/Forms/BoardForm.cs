@@ -7,7 +7,7 @@ using DevPulse.Core.Services;
 
 namespace DevPulse.App.Forms;
 
-public sealed class BoardForm : Form
+public sealed partial class BoardForm : Form
 {
     private static readonly Color DarkBg = Color.FromArgb(30, 30, 46);
     private static readonly Color ToolbarBg = Color.FromArgb(36, 36, 52);
@@ -15,14 +15,6 @@ public sealed class BoardForm : Form
     private readonly IStateStore _store;
     private readonly SettingsService _settings;
     private readonly BoardViewService _boardService = new();
-
-    private Panel _toolbar = null!;
-    private Panel _boardPanel = null!;
-    private Label _staleBanner = null!;
-    private TextBox _searchBox = null!;
-    private ComboBox _typeFilter = null!;
-    private ComboBox _assigneeFilter = null!;
-    private ComboBox _priorityFilter = null!;
 
     private bool _mineOnly, _sprintOnly, _bugsOnly, _unassignedOnly;
     private IReadOnlyList<WorkItem> _allItems = [];
@@ -43,88 +35,24 @@ public sealed class BoardForm : Form
     {
         _store = store;
         _settings = settings;
-        BuildUi();
+        InitializeComponent();
+        BuildToolbarLayout();
     }
 
-    private void BuildUi()
+    private void BuildToolbarLayout()
     {
-        Text = "DevPulse — Board";
-        Size = new Size(1200, 750);
-        BackColor = DarkBg;
-        ForeColor = Color.FromArgb(220, 220, 235);
-        StartPosition = FormStartPosition.CenterScreen;
-        Font = new Font("Segoe UI", 9f);
-
-        _staleBanner = new Label
-        {
-            Text = "⚠  Board data may be stale — last refresh failed",
-            Dock = DockStyle.Top,
-            Height = 28,
-            BackColor = Color.FromArgb(120, 60, 30),
-            ForeColor = Color.White,
-            TextAlign = ContentAlignment.MiddleCenter,
-            Visible = false
-        };
-
-        _toolbar = new Panel
-        {
-            Height = 42,
-            Dock = DockStyle.Top,
-            BackColor = ToolbarBg,
-            Padding = new Padding(8, 6, 8, 6)
-        };
-
-        _searchBox = new TextBox
-        {
-            PlaceholderText = "Filter items...",
-            Width = 220,
-            BackColor = Color.FromArgb(42, 42, 60),
-            ForeColor = Color.FromArgb(220, 220, 235),
-            BorderStyle = BorderStyle.FixedSingle
-        };
-        _searchBox.TextChanged += (_, _) => ApplyFilters();
-
-        _typeFilter = DarkCombo(["All types", "Feature", "Bug", "Task", "User Story"]);
-        _typeFilter.SelectedIndexChanged += (_, _) => ApplyFilters();
-
-        _assigneeFilter = DarkCombo(["All assignees"]);
-        _assigneeFilter.SelectedIndexChanged += (_, _) => ApplyFilters();
-
-        _priorityFilter = DarkCombo(["All priorities", "P1", "P2", "P3"]);
-        _priorityFilter.SelectedIndexChanged += (_, _) => ApplyFilters();
-
+        _toolbar.SuspendLayout();
         _toolbar.Controls.Add(_searchBox);
         int x = _searchBox.Right + 8;
         _typeFilter.Left = x; _toolbar.Controls.Add(_typeFilter); x = _typeFilter.Right + 8;
         _assigneeFilter.Left = x; _toolbar.Controls.Add(_assigneeFilter); x = _assigneeFilter.Right + 8;
         _priorityFilter.Left = x; _toolbar.Controls.Add(_priorityFilter); x = _priorityFilter.Right + 16;
-
-        // Toggle buttons
-        x = AddToggle(_toolbar, "Mine only", x, () => { _mineOnly = !_mineOnly; ApplyFilters(); });
-        x = AddToggle(_toolbar, "Current sprint", x, () => { _sprintOnly = !_sprintOnly; ApplyFilters(); });
-        x = AddToggle(_toolbar, "Bugs only", x, () => { _bugsOnly = !_bugsOnly; ApplyFilters(); });
-        x = AddToggle(_toolbar, "Unassigned only", x, () => { _unassignedOnly = !_unassignedOnly; ApplyFilters(); });
-
-        var btnRefresh = DarkButton("⟳ Refresh");
-        btnRefresh.Left = x + 8;
-        btnRefresh.Click += async (_, _) =>
-        {
-            try { await LoadAsync(); }
-            catch (Exception ex) { Serilog.Log.Error(ex, "BoardForm: Refresh failed"); }
-        };
-        _toolbar.Controls.Add(btnRefresh);
-
-        _boardPanel = new Panel
-        {
-            Dock = DockStyle.Fill,
-            BackColor = DarkBg,
-            AutoScroll = true,
-            Padding = new Padding(8)
-        };
-
-        Controls.Add(_boardPanel);
-        Controls.Add(_toolbar);
-        Controls.Add(_staleBanner);
+        _btnMineOnly.Left = x; _toolbar.Controls.Add(_btnMineOnly); x = _btnMineOnly.Right + 6;
+        _btnSprintOnly.Left = x; _toolbar.Controls.Add(_btnSprintOnly); x = _btnSprintOnly.Right + 6;
+        _btnBugsOnly.Left = x; _toolbar.Controls.Add(_btnBugsOnly); x = _btnBugsOnly.Right + 6;
+        _btnUnassignedOnly.Left = x; _toolbar.Controls.Add(_btnUnassignedOnly); x = _btnUnassignedOnly.Right + 6;
+        _btnRefresh.Left = x + 8; _toolbar.Controls.Add(_btnRefresh);
+        _toolbar.ResumeLayout(false);
     }
 
     public async Task LoadAsync()
@@ -226,55 +154,42 @@ public sealed class BoardForm : Form
         _boardPanel.ResumeLayout(true);
     }
 
-    private static ComboBox DarkCombo(string[] items)
+    private void SearchBox_TextChanged(object? sender, EventArgs e) => ApplyFilters();
+    private void TypeFilter_SelectedIndexChanged(object? sender, EventArgs e) => ApplyFilters();
+    private void AssigneeFilter_SelectedIndexChanged(object? sender, EventArgs e) => ApplyFilters();
+    private void PriorityFilter_SelectedIndexChanged(object? sender, EventArgs e) => ApplyFilters();
+
+    private void BtnMineOnly_Click(object? sender, EventArgs e)
     {
-        var cb = new ComboBox
-        {
-            DropDownStyle = ComboBoxStyle.DropDownList,
-            Width = 130,
-            BackColor = Color.FromArgb(42, 42, 60),
-            ForeColor = Color.FromArgb(220, 220, 235),
-            FlatStyle = FlatStyle.Flat
-        };
-        cb.Items.AddRange(items);
-        cb.SelectedIndex = 0;
-        return cb;
+        _mineOnly = !_mineOnly;
+        _btnMineOnly.BackColor = _mineOnly ? System.Drawing.Color.FromArgb(80, 80, 140) : System.Drawing.Color.FromArgb(50, 50, 78);
+        ApplyFilters();
     }
 
-    private static int AddToggle(Panel parent, string text, int x, Action onClick)
+    private void BtnSprintOnly_Click(object? sender, EventArgs e)
     {
-        var btn = new Button
-        {
-            Text = text,
-            Left = x,
-            Height = 26,
-            AutoSize = true,
-            FlatStyle = FlatStyle.Flat,
-            BackColor = Color.FromArgb(50, 50, 78),
-            ForeColor = Color.FromArgb(200, 200, 220),
-            Padding = new Padding(8, 0, 8, 0),
-            FlatAppearance = { BorderColor = Color.FromArgb(80, 80, 110) }
-        };
-        btn.Click += (_, _) =>
-        {
-            onClick();
-            btn.BackColor = btn.BackColor == Color.FromArgb(50, 50, 78)
-                ? Color.FromArgb(80, 80, 140)
-                : Color.FromArgb(50, 50, 78);
-        };
-        parent.Controls.Add(btn);
-        return btn.Right + 6;
+        _sprintOnly = !_sprintOnly;
+        _btnSprintOnly.BackColor = _sprintOnly ? System.Drawing.Color.FromArgb(80, 80, 140) : System.Drawing.Color.FromArgb(50, 50, 78);
+        ApplyFilters();
     }
 
-    private static Button DarkButton(string text) => new()
+    private void BtnBugsOnly_Click(object? sender, EventArgs e)
     {
-        Text = text,
-        Height = 26,
-        AutoSize = true,
-        FlatStyle = FlatStyle.Flat,
-        BackColor = Color.FromArgb(50, 50, 78),
-        ForeColor = Color.FromArgb(200, 200, 220),
-        Padding = new Padding(8, 0, 8, 0),
-        FlatAppearance = { BorderColor = Color.FromArgb(80, 80, 110) }
-    };
+        _bugsOnly = !_bugsOnly;
+        _btnBugsOnly.BackColor = _bugsOnly ? System.Drawing.Color.FromArgb(80, 80, 140) : System.Drawing.Color.FromArgb(50, 50, 78);
+        ApplyFilters();
+    }
+
+    private void BtnUnassignedOnly_Click(object? sender, EventArgs e)
+    {
+        _unassignedOnly = !_unassignedOnly;
+        _btnUnassignedOnly.BackColor = _unassignedOnly ? System.Drawing.Color.FromArgb(80, 80, 140) : System.Drawing.Color.FromArgb(50, 50, 78);
+        ApplyFilters();
+    }
+
+    private async void BtnRefresh_Click(object? sender, EventArgs e)
+    {
+        try { await LoadAsync(); }
+        catch (Exception ex) { Serilog.Log.Error(ex, "BoardForm: Refresh failed"); }
+    }
 }

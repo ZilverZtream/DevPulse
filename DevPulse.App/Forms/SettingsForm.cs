@@ -5,7 +5,7 @@ using DevPulse.Infrastructure.Security;
 
 namespace DevPulse.App.Forms;
 
-public sealed class SettingsForm : Form
+public sealed partial class SettingsForm : Form
 {
     private static readonly Color DarkBg = Color.FromArgb(30, 30, 46);
     private static readonly Color PanelBg = Color.FromArgb(38, 38, 56);
@@ -15,26 +15,10 @@ public sealed class SettingsForm : Form
     private readonly SettingsService _settings;
     private AppSettings _appSettings = new();
 
-    // Connection
-    private TextBox _orgUrl = null!, _project = null!, _repoFilter = null!, _currentUser = null!, _patBox = null!;
-    // Polling
-    private NumericUpDown _prInterval = null!, _wiInterval = null!;
-    private CheckBox _refreshOnStartup = null!;
-    // Identities
-    private TextBox _botPatterns = null!, _poQaGroup = null!;
-    private DataGridView _aliasGrid = null!;
-    // Inboxes
-    private ListBox _inboxList = null!;
-    private TextBox _inboxRulesJson = null!;
-    // Board
-    private TextBox _areaPath = null!, _iterationPath = null!;
-    private DataGridView _columnsGrid = null!;
-    // Advanced
-    private NumericUpDown _maxEvents = null!;
-
     public SettingsForm(SettingsService settings)
     {
         _settings = settings;
+        InitializeComponent();
         BuildUi();
         _ = LoadSettingsAsync().ContinueWith(
             t => Serilog.Log.Error(t.Exception?.GetBaseException(), "SettingsForm: LoadSettings failed"),
@@ -78,15 +62,7 @@ public sealed class SettingsForm : Form
             ForeColor = Color.White,
             FlatAppearance = { BorderSize = 0 }
         };
-        btnSave.Click += async (_, _) =>
-        {
-            try { await SaveSettingsAsync(); }
-            catch (Exception ex)
-            {
-                Serilog.Log.Error(ex, "SettingsForm: Save failed");
-                MessageBox.Show($"Save failed: {ex.Message}", "DevPulse", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-        };
+        btnSave.Click += new EventHandler(BtnSave_Click);
 
         Controls.Add(tabs);
         Controls.Add(btnSave);
@@ -110,15 +86,7 @@ public sealed class SettingsForm : Form
         AddRow(layout, "Personal Access Token:", _patBox);
 
         var btnTest = new Button { Text = "Test connection", FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(50, 80, 120), ForeColor = Color.White, Height = 28 };
-        btnTest.Click += async (_, _) =>
-        {
-            try { await TestConnectionAsync(); }
-            catch (Exception ex)
-            {
-                Serilog.Log.Error(ex, "SettingsForm: TestConnection failed");
-                MessageBox.Show($"Connection test failed: {ex.Message}", "DevPulse", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-        };
+        btnTest.Click += new EventHandler(BtnTest_Click);
         layout.Controls.Add(new Label(), 0, layout.RowCount);
         layout.Controls.Add(btnTest, 1, layout.RowCount - 1);
 
@@ -280,7 +248,7 @@ public sealed class SettingsForm : Form
         AddRow(layout, "Max events retained per inbox:", _maxEvents);
 
         var btnExport = new Button { Text = "Export settings JSON…", FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(50, 80, 120), ForeColor = Color.White, Height = 28 };
-        btnExport.Click += (_, _) => ExportSettings();
+        btnExport.Click += new EventHandler(BtnExport_Click);
         layout.Controls.Add(new Label(), 0, layout.RowCount);
         layout.Controls.Add(btnExport, 1, layout.RowCount - 1);
 
@@ -466,4 +434,26 @@ public sealed class SettingsForm : Form
         c.BackColor = Color.FromArgb(42, 42, 62);
         c.ForeColor = Color.FromArgb(220, 220, 235);
     }
+
+    private async void BtnSave_Click(object? sender, EventArgs e)
+    {
+        try { await SaveSettingsAsync(); }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "SettingsForm: Save failed");
+            MessageBox.Show($"Save failed: {ex.Message}", "DevPulse", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private async void BtnTest_Click(object? sender, EventArgs e)
+    {
+        try { await TestConnectionAsync(); }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "SettingsForm: TestConnection failed");
+            MessageBox.Show($"Connection test failed: {ex.Message}", "DevPulse", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void BtnExport_Click(object? sender, EventArgs e) => ExportSettings();
 }

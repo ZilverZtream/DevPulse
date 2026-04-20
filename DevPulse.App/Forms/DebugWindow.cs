@@ -2,57 +2,26 @@ using DevPulse.Core.Services;
 
 namespace DevPulse.App.Forms;
 
-public sealed class DebugWindow : Form
+public sealed partial class DebugWindow : Form
 {
     private static readonly Color DarkBg = Color.FromArgb(20, 20, 36);
     private static readonly Color TextPrimary = Color.FromArgb(220, 220, 235);
 
     private readonly DebugLogService _debugLog;
-    private TabControl _tabs = null!;
 
     public DebugWindow(DebugLogService debugLog)
     {
         _debugLog = debugLog;
-        BuildUi();
-        RefreshAll();
-    }
-
-    private void BuildUi()
-    {
-        Text = "DevPulse — Debug / Audit";
-        Size = new Size(900, 650);
-        BackColor = DarkBg;
-        ForeColor = TextPrimary;
-        Font = new Font("Consolas", 9f);
-        StartPosition = FormStartPosition.CenterScreen;
-
-        _tabs = new TabControl
-        {
-            Dock = DockStyle.Fill,
-            Appearance = TabAppearance.FlatButtons
-        };
-
+        InitializeComponent();
         _tabs.TabPages.Add(BuildPollStatusTab());
         _tabs.TabPages.Add(BuildEventLogTab());
         _tabs.TabPages.Add(BuildRuleTracesTab());
         _tabs.TabPages.Add(BuildIdentityLogTab());
         _tabs.TabPages.Add(BuildMuteLogTab());
-
-        var btnRefresh = new Button
-        {
-            Text = "Refresh",
-            Dock = DockStyle.Bottom,
-            Height = 30,
-            FlatStyle = FlatStyle.Flat,
-            BackColor = Color.FromArgb(50, 50, 78),
-            ForeColor = TextPrimary,
-            FlatAppearance = { BorderColor = Color.FromArgb(80, 80, 110) }
-        };
-        btnRefresh.Click += (_, _) => RefreshAll();
-
-        Controls.Add(_tabs);
-        Controls.Add(btnRefresh);
+        RefreshAll();
     }
+
+    private void BtnRefresh_Click(object? sender, EventArgs e) => RefreshAll();
 
     private TabPage BuildPollStatusTab()
     {
