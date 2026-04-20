@@ -102,7 +102,7 @@ public static class DbSchema
                 m.CommandText = alter;
                 await m.ExecuteNonQueryAsync();
             }
-            catch (SqliteException) { /* column already exists */ }
+            catch (SqliteException ex) when (ex.Message.Contains("duplicate column name", StringComparison.OrdinalIgnoreCase)) { }
         }
 
         // Back-fill typed columns from legacy key column
