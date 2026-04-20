@@ -36,7 +36,7 @@ public sealed class InboxEventsForm : Form
         _settings = settings;
         _inboxName = inboxName;
         _boardForm = boardForm;
-        Disposed += (_, _) => _formCts.Cancel();
+        Disposed += (_, _) => { _formCts.Cancel(); _formCts.Dispose(); };
         InitializeComponent();
         LoadEventsAsync().FireAndForget(nameof(LoadEventsAsync));
     }
@@ -210,17 +210,19 @@ public sealed class InboxEventsForm : Form
     {
         var entry = MuteService.CreatePrSnooze(prId, DateTimeOffset.UtcNow + duration);
         await _store.SaveMuteEntryAsync(entry, _formCts.Token);
+        await LoadEventsAsync();
     }
 
     private async Task MutePrAsync(int prId)
     {
         var entry = MuteService.CreatePrMute(prId);
         await _store.SaveMuteEntryAsync(entry, _formCts.Token);
+        await LoadEventsAsync();
     }
 
     private async Task MarkAllReadAsync()
     {
-        var events = await _viewService.GetLatestAsync(_inboxName, 1000, _formCts.Token);
+        var events = await _viewService.GetLatestAsync(_inboxName, int.MaxValue, _formCts.Token);
         await _viewService.MarkReadAsync(events.Select(e => e.EventId), _formCts.Token);
         await LoadEventsAsync();
     }

@@ -107,6 +107,7 @@ public sealed class PollingService : PollingLoopBase
             try
             {
                 var threads = await _adoClient.GetPullRequestThreadsAsync(pr.PullRequestId, pr.RepositoryId, ct);
+                Interlocked.Increment(ref apiCallCount);
                 return (pr, threads);
             }
             catch (OperationCanceledException) { throw; }
@@ -118,7 +119,6 @@ public sealed class PollingService : PollingLoopBase
             finally { fetchSemaphore.Release(); }
         }).ToArray();
         var prWithThreads = await Task.WhenAll(threadTasks);
-        apiCallCount += prs.Count;
 
         // Collect candidate comment event IDs for batch dedup
         var candidateCommentIds = new List<string>();
@@ -135,7 +135,7 @@ public sealed class PollingService : PollingLoopBase
         var existingIds = await _store.GetExistingEventIdsAsync(allCandidateIds, ct);
 
         // Build comment events (skip already-known), save snapshots
-        var snapshotsByPrId = prSnapshots.DistinctBy(s => s.Pr.PullRequestId).ToDictionary(s => s.Pr.PullRequestId);
+        var snapshotsByPrId = prSnapshots.ToDictionary(s => s.Pr.PullRequestId);
         foreach (var (pr, threads) in prWithThreads)
         {
             var snapshotEntry = snapshotsByPrId[pr.PullRequestId];
@@ -187,6 +187,9 @@ public sealed class PollingService : PollingLoopBase
 
         var unmuted = _muteService.Filter(newEvents, activeMutes, pollTime);
         var collapsed = _collapser.Collapse(unmuted, pollTime);
+
+        if (!inboxes.Any(i => i.IsSystemInbox))
+            Log.Warning("Poll '{Track}': no system inbox configured — NeedsMyAttention events will not be routed", TrackName);
 
         foreach (var evt in collapsed)
         {

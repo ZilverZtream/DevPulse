@@ -18,7 +18,6 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly SettingsService _settings;
     private readonly DebugLogService _debugLog;
     private readonly InboxViewService _inboxView;
-    private readonly BoardViewService _boardView;
     private readonly WindowsFormsSynchronizationContext _uiSync = new();
 
     private PollingService? _prPoller;
@@ -36,9 +35,8 @@ public sealed class TrayApplicationContext : ApplicationContext
         _settings = new SettingsService(store, store);
         _debugLog = new DebugLogService();
         _inboxView = new InboxViewService(store);
-        _boardView = new BoardViewService();
 
-        RunBackground(InitializeAsync, "initialize");
+        _uiSync.Post(_ => RunBackground(InitializeAsync, "initialize"), null);
     }
 
     private async Task InitializeAsync()
@@ -226,10 +224,15 @@ public sealed class TrayApplicationContext : ApplicationContext
         using var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
         g.DrawString("D", font, textBr, new RectangleF(0, 0, 16, 16), sf);
         var hIcon = bmp.GetHicon();
-        using var tmp = Icon.FromHandle(hIcon);
-        var icon = (Icon)tmp.Clone();
-        DestroyIcon(hIcon);
-        return icon;
+        try
+        {
+            using var tmp = Icon.FromHandle(hIcon);
+            return (Icon)tmp.Clone();
+        }
+        finally
+        {
+            DestroyIcon(hIcon);
+        }
     }
 
     protected override void Dispose(bool disposing)

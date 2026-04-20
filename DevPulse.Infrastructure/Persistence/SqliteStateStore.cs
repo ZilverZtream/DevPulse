@@ -495,23 +495,6 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
         finally { _lock.Release(); }
     }
 
-    public async Task<(string? Status, string? VotesJson)> GetPrSnapshotAsync(int prId, CancellationToken ct = default)
-    {
-        await _lock.WaitAsync(ct);
-        try
-        {
-            await using var cmd = _conn.CreateCommand();
-            cmd.CommandText = "SELECT status, votes_json FROM pr_snapshots WHERE pr_id = @id";
-            cmd.Parameters.AddWithValue("@id", prId);
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
-            if (!await reader.ReadAsync(ct)) return (null, null);
-            var ordStatus = reader.GetOrdinal("status");
-            var ordVotesJson = reader.GetOrdinal("votes_json");
-            return (reader.GetString(ordStatus), reader.GetString(ordVotesJson));
-        }
-        finally { _lock.Release(); }
-    }
-
     public async Task<Dictionary<int, (string? Status, string? VotesJson)>> GetPrSnapshotsAsync(IEnumerable<int> prIds, CancellationToken ct = default)
     {
         var ids = prIds.ToList();
@@ -519,18 +502,21 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
         await _lock.WaitAsync(ct);
         try
         {
-            await using var cmd = _conn.CreateCommand();
-            var paramNames = ids.Select((_, i) => $"@p{i}").ToList();
-            cmd.CommandText = $"SELECT pr_id, status, votes_json FROM pr_snapshots WHERE pr_id IN ({string.Join(",", paramNames)})";
-            for (int i = 0; i < ids.Count; i++)
-                cmd.Parameters.AddWithValue($"@p{i}", ids[i]);
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
             var result = new Dictionary<int, (string?, string?)>();
-            var ordPrId = reader.GetOrdinal("pr_id");
-            var ordStatus = reader.GetOrdinal("status");
-            var ordVotes = reader.GetOrdinal("votes_json");
-            while (await reader.ReadAsync(ct))
-                result[reader.GetInt32(ordPrId)] = (reader.GetString(ordStatus), reader.GetString(ordVotes));
+            foreach (var chunk in ids.Chunk(500))
+            {
+                await using var cmd = _conn.CreateCommand();
+                var paramNames = chunk.Select((_, i) => $"@p{i}").ToList();
+                cmd.CommandText = $"SELECT pr_id, status, votes_json FROM pr_snapshots WHERE pr_id IN ({string.Join(",", paramNames)})";
+                for (int i = 0; i < chunk.Length; i++)
+                    cmd.Parameters.AddWithValue($"@p{i}", chunk[i]);
+                await using var reader = await cmd.ExecuteReaderAsync(ct);
+                var ordPrId = reader.GetOrdinal("pr_id");
+                var ordStatus = reader.GetOrdinal("status");
+                var ordVotes = reader.GetOrdinal("votes_json");
+                while (await reader.ReadAsync(ct))
+                    result[reader.GetInt32(ordPrId)] = (reader.GetString(ordStatus), reader.GetString(ordVotes));
+            }
             return result;
         }
         finally { _lock.Release(); }

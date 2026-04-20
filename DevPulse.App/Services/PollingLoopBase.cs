@@ -11,7 +11,8 @@ public abstract class PollingLoopBase : IDisposable, IAsyncDisposable
     private int _disposed;
 
     public event EventHandler? PollCompleted;
-    public bool LastPollFailed { get; private set; }
+    private volatile bool _lastPollFailed;
+    public bool LastPollFailed => _lastPollFailed;
 
     protected abstract string TrackName { get; }
     protected abstract Task ExecutePollAsync(CancellationToken ct);
@@ -27,7 +28,8 @@ public abstract class PollingLoopBase : IDisposable, IAsyncDisposable
     public Task RefreshNowAsync()
     {
         if (Volatile.Read(ref _disposed) != 0) return Task.CompletedTask;
-        return ExecuteSafeAsync(_cts.Token);
+        try { return ExecuteSafeAsync(_cts.Token); }
+        catch (ObjectDisposedException) { return Task.CompletedTask; }
     }
 
     private async Task RunLoopAsync(TimeSpan interval, CancellationToken ct)
@@ -49,14 +51,14 @@ public abstract class PollingLoopBase : IDisposable, IAsyncDisposable
         {
             ct.ThrowIfCancellationRequested();
             await ExecutePollAsync(ct).ConfigureAwait(false);
-            LastPollFailed = false;
+            _lastPollFailed = false;
             PollCompleted?.Invoke(this, EventArgs.Empty);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             Log.Error(ex, "{Track} poll cycle failed", TrackName);
-            LastPollFailed = true;
+            _lastPollFailed = true;
             await OnPollFailedAsync(ex, ct).ConfigureAwait(false);
         }
         finally

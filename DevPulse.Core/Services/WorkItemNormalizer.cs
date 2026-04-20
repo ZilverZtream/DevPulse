@@ -1,6 +1,7 @@
 using DevPulse.Core.Enums;
 using DevPulse.Core.Interfaces;
 using DevPulse.Core.Models;
+using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using Serilog;
 
@@ -11,7 +12,7 @@ public sealed partial class WorkItemNormalizer
     [GeneratedRegex(@"AB#(\d+)", RegexOptions.IgnoreCase)]
     private static partial Regex WorkItemRefRegex();
 
-    private static readonly HashSet<int> _warnedNoUniqueName = [];
+    private static readonly ConcurrentDictionary<int, bool> _warnedNoUniqueName = new();
     private static readonly Dictionary<string, WorkItemType> TypeMap = new(StringComparer.OrdinalIgnoreCase)
     {
         ["Feature"] = WorkItemType.Feature,
@@ -38,7 +39,7 @@ public sealed partial class WorkItemNormalizer
         var aging = column != null ? ComputeAging(days, column) : AgingLevel.Fresh;
 
         if (string.IsNullOrWhiteSpace(dto.AssignedToUniqueName) && !string.IsNullOrWhiteSpace(dto.AssignedToDisplayName)
-            && _warnedNoUniqueName.Add(dto.Id))
+            && _warnedNoUniqueName.TryAdd(dto.Id, true))
             Log.Debug("WorkItem {Id} has no UniqueName; using display name '{Name}' as canonical key — mutes may be orphaned on rename", dto.Id, dto.AssignedToDisplayName);
 
         return new WorkItem
@@ -86,7 +87,7 @@ public sealed partial class WorkItemNormalizer
                     return parts[^1];
             }
 
-            // Fall back to AB# work item reference
+            // Fall back to AB# PR link pattern in relation URL
             var m = WorkItemRefRegex().Match(rel.Url);
             if (m.Success) return m.Groups[1].Value;
         }

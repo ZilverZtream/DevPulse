@@ -22,7 +22,6 @@ public interface IStateStore
     Task SetLastSuccessfulPollAsync(string track, DateTimeOffset ts, CancellationToken ct = default);
 
     Task SavePrSnapshotAsync(int prId, string status, string votesJson, CancellationToken ct = default);
-    Task<(string? Status, string? VotesJson)> GetPrSnapshotAsync(int prId, CancellationToken ct = default);
     Task<Dictionary<int, (string? Status, string? VotesJson)>> GetPrSnapshotsAsync(IEnumerable<int> prIds, CancellationToken ct = default);
     Task CleanStaleSnapshotsAsync(int retainDays = 30, CancellationToken ct = default);
 

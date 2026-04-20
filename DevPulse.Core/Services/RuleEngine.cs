@@ -1,6 +1,5 @@
 using DevPulse.Core.Enums;
 using DevPulse.Core.Models;
-using Serilog;
 using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 
@@ -27,11 +26,6 @@ public sealed class RuleEngine
             if (MatchesNeedsMyAttention(evt, settings, keywordPacks))
                 return (systemInbox.Name, "NeedsMyAttention:SystemRule");
         }
-        else if (MatchesNeedsMyAttention(evt, settings, keywordPacks))
-        {
-            Log.Warning("No system inbox configured; event {EventId} would have routed to NeedsMyAttention", evt.EventId);
-        }
-
         foreach (var inbox in inboxes.Where(i => !i.IsSystemInbox && i.IsEnabled).OrderBy(i => i.Order))
         {
             foreach (var rule in inbox.Rules.Where(r => r.Enabled))
