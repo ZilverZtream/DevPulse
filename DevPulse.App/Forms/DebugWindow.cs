@@ -13,11 +13,11 @@ public sealed class DebugWindow : Form
     public DebugWindow(DebugLogService debugLog)
     {
         _debugLog = debugLog;
-        InitializeComponent();
+        BuildUi();
         RefreshAll();
     }
 
-    private void InitializeComponent()
+    private void BuildUi()
     {
         Text = "DevPulse — Debug / Audit";
         Size = new Size(900, 650);

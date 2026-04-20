@@ -35,7 +35,7 @@ public sealed class SettingsForm : Form
     public SettingsForm(SettingsService settings)
     {
         _settings = settings;
-        InitializeComponent();
+        BuildUi();
         _ = LoadSettingsAsync().ContinueWith(
             t => Serilog.Log.Error(t.Exception?.GetBaseException(), "SettingsForm: LoadSettings failed"),
             System.Threading.CancellationToken.None,
@@ -43,7 +43,7 @@ public sealed class SettingsForm : Form
             System.Threading.Tasks.TaskScheduler.Default);
     }
 
-    private void InitializeComponent()
+    private void BuildUi()
     {
         Text = "DevPulse — Settings";
         Size = new Size(780, 580);

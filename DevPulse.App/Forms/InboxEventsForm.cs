@@ -37,11 +37,11 @@ public sealed class InboxEventsForm : Form
         _inboxName = inboxName;
         _boardForm = boardForm;
         Disposed += (_, _) => { _formCts.Cancel(); _formCts.Dispose(); };
-        InitializeComponent();
+        BuildUi();
         LoadEventsAsync().FireAndForget(nameof(LoadEventsAsync));
     }
 
-    private void InitializeComponent()
+    private void BuildUi()
     {
         Text = $"DevPulse — {_inboxName}";
         Size = new Size(820, 600);

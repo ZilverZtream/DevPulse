@@ -43,10 +43,10 @@ public sealed class BoardForm : Form
     {
         _store = store;
         _settings = settings;
-        InitializeComponent();
+        BuildUi();
     }
 
-    private void InitializeComponent()
+    private void BuildUi()
     {
         Text = "DevPulse — Board";
         Size = new Size(1200, 750);
