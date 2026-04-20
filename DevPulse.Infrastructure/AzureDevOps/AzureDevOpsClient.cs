@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using DevPulse.Core.Interfaces;
 using DevPulse.Core.Models;
+using Serilog;
 
 namespace DevPulse.Infrastructure.AzureDevOps;
 
@@ -32,6 +33,7 @@ public sealed class AzureDevOpsClient : IAzureDevOpsClient
         const int pageSize = 200;
         const int maxPages = 5;
         var allPrs = new List<PullRequestDto>();
+        bool reachedHardCap = true;
 
         for (int page = 0; page < maxPages; page++)
         {
@@ -46,11 +48,14 @@ public sealed class AzureDevOpsClient : IAzureDevOpsClient
             var body = await response.Content.ReadAsStringAsync(ct);
             var result = JsonSerializer.Deserialize<AdoListResponse<AdoPullRequest>>(body, JsonOpts);
             var pageItems = result?.Value;
-            if (pageItems == null || pageItems.Count == 0) break;
+            if (pageItems == null || pageItems.Count == 0) { reachedHardCap = false; break; }
 
             allPrs.AddRange(pageItems.Select(Map));
-            if (pageItems.Count < pageSize) break;
+            if (pageItems.Count < pageSize) { reachedHardCap = false; break; }
         }
+
+        if (reachedHardCap)
+            Log.Warning("PR fetch reached the {Cap}-item hard cap; some PRs may have been skipped. Configure a repository filter to reduce scope.", pageSize * maxPages);
 
         return allPrs;
     }
