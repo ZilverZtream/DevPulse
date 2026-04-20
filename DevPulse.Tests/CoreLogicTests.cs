@@ -59,10 +59,10 @@ public class RuleEngineTests
             Status = "active", Repository = "repo", Project = "proj"
         };
 
-        var result = new RuleEngine().AssignInbox(evt, [], [ruleInbox, fallbackInbox], [], new AppSettings());
+        var (inboxName, _) = new RuleEngine().AssignInbox(evt, [], [ruleInbox, fallbackInbox], [], new AppSettings());
 
         // If empty string were treated as wildcard, result would be "Conditional"
-        Assert.Equal("Fallback", result);
+        Assert.Equal("Fallback", inboxName);
     }
 }
 
@@ -170,9 +170,9 @@ public class RuleEngineNullMessageTests
             Status = "active"
         };
 
-        var result = _engine.AssignInbox(evt, NoWatchers, inboxes, NoPacks, Settings);
+        var (inboxName, _) = _engine.AssignInbox(evt, NoWatchers, inboxes, NoPacks, Settings);
 
-        Assert.Equal("All", result);
+        Assert.Equal("All", inboxName);
     }
 
     [Fact]
@@ -202,9 +202,9 @@ public class RuleEngineNullMessageTests
             Status = "active"
         };
 
-        var result = _engine.AssignInbox(evt, NoWatchers, inboxes, NoPacks, Settings);
+        var (inboxName, _) = _engine.AssignInbox(evt, NoWatchers, inboxes, NoPacks, Settings);
 
-        Assert.Equal("Other", result); // null message doesn't match "ALERT"; falls to fallback
+        Assert.Equal("Other", inboxName); // null message doesn't match "ALERT"; falls to fallback
     }
 
     [Fact]
@@ -229,9 +229,9 @@ public class RuleEngineNullMessageTests
             Status = "active"
         };
 
-        var result = _engine.AssignInbox(evt, NoWatchers, inboxes, NoPacks, Settings);
+        var (inboxName, _) = _engine.AssignInbox(evt, NoWatchers, inboxes, NoPacks, Settings);
 
-        Assert.Equal("Filtered", result); // empty string doesn't match "noise" exclude, rule passes, routes here
+        Assert.Equal("Filtered", inboxName); // empty string doesn't match "noise" exclude, rule passes, routes here
     }
 }
 

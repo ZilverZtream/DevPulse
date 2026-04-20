@@ -7,57 +7,41 @@ namespace DevPulse.Core.Services;
 
 public sealed class RuleEngine
 {
-    public string AssignInbox(
+    public (string InboxName, string? RuleDescription) AssignInbox(
         DevOpsEvent evt,
         IReadOnlyList<Watcher> watchers,
         IReadOnlyList<InboxDefinition> inboxes,
         IReadOnlyList<KeywordPack> keywordPacks,
         AppSettings settings)
     {
-        // 1. Watchers short-circuit rule evaluation
         foreach (var watcher in watchers)
         {
             if (MatchesWatcher(evt, watcher))
-            {
-                evt.MatchedRuleDescription = $"Watcher:{watcher.Type}={watcher.Pattern}";
-                return watcher.TargetInbox;
-            }
+                return (watcher.TargetInbox, $"Watcher:{watcher.Type}={watcher.Pattern}");
         }
 
-        // 2. System inbox (Needs My Attention) — always evaluated first
         var systemInbox = inboxes.FirstOrDefault(i => i.IsSystemInbox);
         if (systemInbox != null && MatchesNeedsMyAttention(evt, settings, keywordPacks))
-        {
-            evt.MatchedRuleDescription = "NeedsMyAttention:SystemRule";
-            return systemInbox.Name;
-        }
+            return (systemInbox.Name, "NeedsMyAttention:SystemRule");
 
-        // 3. User inboxes in order; first match wins
         foreach (var inbox in inboxes.Where(i => !i.IsSystemInbox && i.IsEnabled).OrderBy(i => i.Order))
         {
             foreach (var rule in inbox.Rules.Where(r => r.Enabled))
             {
                 if (MatchesRule(evt, rule, keywordPacks))
-                {
-                    evt.MatchedRuleDescription = BuildRuleDescription(rule);
-                    return inbox.Name;
-                }
+                    return (inbox.Name, BuildRuleDescription(rule));
             }
         }
 
-        // 4. Fallback inbox (last enabled non-system inbox)
         var fallback = inboxes
             .Where(i => !i.IsSystemInbox && i.IsEnabled)
             .OrderBy(i => i.Order)
             .LastOrDefault();
 
         if (fallback != null)
-        {
-            evt.MatchedRuleDescription = "FallbackInbox";
-            return fallback.Name;
-        }
+            return (fallback.Name, "FallbackInbox");
 
-        return "Unassigned";
+        return ("Unassigned", null);
     }
 
     private bool MatchesNeedsMyAttention(DevOpsEvent evt, AppSettings settings, IReadOnlyList<KeywordPack> packs)

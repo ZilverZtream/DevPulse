@@ -184,7 +184,9 @@ public sealed class PollingService : PollingLoopBase
 
         foreach (var evt in collapsed)
         {
-            evt.InboxName = _ruleEngine.AssignInbox(evt, watchers, inboxes, packs, appSettings);
+            var (inboxName, ruleDescription) = _ruleEngine.AssignInbox(evt, watchers, inboxes, packs, appSettings);
+            evt.InboxName = inboxName;
+            evt.MatchedRuleDescription = ruleDescription;
             _debugLog.RecordEvent(evt);
         }
 
