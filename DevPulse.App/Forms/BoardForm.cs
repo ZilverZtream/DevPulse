@@ -28,6 +28,7 @@ public sealed class BoardForm : Form
     private IReadOnlyList<WorkItem> _allItems = [];
     private IReadOnlyList<BoardColumnDefinition> _columns = [];
     private DevPulse.Core.Models.AppSettings _appSettings = new();
+    private readonly Dictionary<string, BoardColumnPanel> _columnPanels = new();
 
     public bool ShowStaleBanner
     {
@@ -183,26 +184,41 @@ public sealed class BoardForm : Form
     private void RenderBoard(IReadOnlyList<WorkItem> filteredItems)
     {
         _boardPanel.SuspendLayout();
-        _boardPanel.Controls.Clear();
 
         var grouped = _boardService.GroupByColumn(filteredItems, _columns);
+        var orderedColumns = _columns.OrderBy(c => c.Order).ToList();
+        var activeNames = orderedColumns.Select(c => c.Name).ToHashSet();
+
+        foreach (var gone in _columnPanels.Keys.Except(activeNames).ToList())
+        {
+            _boardPanel.Controls.Remove(_columnPanels[gone]);
+            _columnPanels[gone].Dispose();
+            _columnPanels.Remove(gone);
+        }
+
         int x = 8;
         int colIndex = 0;
 
-        foreach (var col in _columns.OrderBy(c => c.Order))
+        foreach (var col in orderedColumns)
         {
             grouped.TryGetValue(col.Name, out var colItems);
             colItems ??= [];
 
-            var panel = new BoardColumnPanel(col.Name, colIndex)
+            if (!_columnPanels.TryGetValue(col.Name, out var panel))
             {
-                Height = _boardPanel.Height - 20,
-                Left = x,
-                Top = 4,
-                Anchor = AnchorStyles.Top | AnchorStyles.Bottom
-            };
+                panel = new BoardColumnPanel(col.Name, colIndex)
+                {
+                    Anchor = AnchorStyles.Top | AnchorStyles.Bottom
+                };
+                _columnPanels[col.Name] = panel;
+                _boardPanel.Controls.Add(panel);
+            }
+
+            panel.Height = _boardPanel.Height - 20;
+            panel.Left = x;
+            panel.Top = 4;
             panel.SetItems(colItems);
-            _boardPanel.Controls.Add(panel);
+
             x += panel.Width + 8;
             colIndex++;
         }
