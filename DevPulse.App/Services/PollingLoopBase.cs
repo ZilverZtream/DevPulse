@@ -2,7 +2,7 @@ using Serilog;
 
 namespace DevPulse.App.Services;
 
-public abstract class PollingLoopBase : IDisposable
+public abstract class PollingLoopBase : IDisposable, IAsyncDisposable
 {
     private readonly CancellationTokenSource _cts = new();
     private readonly SemaphoreSlim _runLock = new(1, 1);
@@ -58,9 +58,23 @@ public abstract class PollingLoopBase : IDisposable
         }
     }
 
+    public async ValueTask DisposeAsync()
+    {
+        _cts.Cancel();
+        if (_loopTask != null)
+        {
+            try { await _loopTask.ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+        }
+        _cts.Dispose();
+        _runLock.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
     public void Dispose()
     {
         _cts.Cancel();
+        _loopTask?.Wait(TimeSpan.FromSeconds(2));
         _cts.Dispose();
         _runLock.Dispose();
         GC.SuppressFinalize(this);

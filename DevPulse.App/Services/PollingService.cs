@@ -58,7 +58,10 @@ public sealed class PollingService : PollingLoopBase
         foreach (var pr in prs)
         {
             var (prevStatus, prevVotesJson) = await _store.GetPrSnapshotAsync(pr.PullRequestId, ct);
-            var currVotes = pr.Reviewers.ToDictionary(r => r.Id, r => r.Vote);
+            var currVotes = pr.Reviewers
+                .Where(r => !string.IsNullOrEmpty(r.Id))
+                .GroupBy(r => r.Id)
+                .ToDictionary(g => g.Key, g => g.Last().Vote);
 
             if (prevStatus != null && !prevStatus.Equals(pr.Status, StringComparison.OrdinalIgnoreCase))
             {
@@ -114,7 +117,7 @@ public sealed class PollingService : PollingLoopBase
             await _store.SavePrSnapshotAsync(pr.PullRequestId, pr.Status, JsonSerializer.Serialize(snapshotEntry.CurrVotes), ct);
 
             var currentUserIsReviewer = pr.Reviewers.Any(r =>
-                r.UniqueName.Equals(appSettings.CurrentUserCanonicalKey, StringComparison.OrdinalIgnoreCase));
+                !string.IsNullOrEmpty(r.UniqueName) && r.UniqueName.Equals(appSettings.CurrentUserCanonicalKey, StringComparison.OrdinalIgnoreCase));
 
             foreach (var thread in threads)
             {
@@ -206,7 +209,7 @@ public sealed class PollingService : PollingLoopBase
             Status = pr.Status,
             CreatedAtUtc = pr.ClosedDate ?? pollTime,
             DiscoveredAtUtc = pollTime,
-            IsCurrentUserReviewer = pr.Reviewers.Any(r => r.UniqueName.Equals(settings.CurrentUserCanonicalKey, StringComparison.OrdinalIgnoreCase))
+            IsCurrentUserReviewer = pr.Reviewers.Any(r => !string.IsNullOrEmpty(r.UniqueName) && r.UniqueName.Equals(settings.CurrentUserCanonicalKey, StringComparison.OrdinalIgnoreCase))
         };
     }
 
@@ -232,7 +235,7 @@ public sealed class PollingService : PollingLoopBase
             Status = pr.Status,
             CreatedAtUtc = pollTime,
             DiscoveredAtUtc = pollTime,
-            IsCurrentUserReviewer = pr.Reviewers.Any(r => r.UniqueName.Equals(settings.CurrentUserCanonicalKey, StringComparison.OrdinalIgnoreCase))
+            IsCurrentUserReviewer = pr.Reviewers.Any(r => !string.IsNullOrEmpty(r.UniqueName) && r.UniqueName.Equals(settings.CurrentUserCanonicalKey, StringComparison.OrdinalIgnoreCase))
         };
     }
 
@@ -256,7 +259,7 @@ public sealed class PollingService : PollingLoopBase
             Status = pr.Status,
             CreatedAtUtc = pollTime,
             DiscoveredAtUtc = pollTime,
-            IsCurrentUserReviewer = reviewer.UniqueName.Equals(settings.CurrentUserCanonicalKey, StringComparison.OrdinalIgnoreCase)
+            IsCurrentUserReviewer = !string.IsNullOrEmpty(reviewer.UniqueName) && reviewer.UniqueName.Equals(settings.CurrentUserCanonicalKey, StringComparison.OrdinalIgnoreCase)
         };
     }
 }
