@@ -1,0 +1,1020 @@
+
+
+DevPulse
+Developer Specification  —  v0.1
+Windows Tray Notifier • Rule-Based Inboxes • Kanban Board
+Target Platform: .NET 8 on Windows
+
+
+
+
+Table of Contents
+
+
+
+1. Purpose
+DevPulse is a lightweight Windows tray application that monitors Azure DevOps pull request activity, classifies events into user-defined inboxes, and surfaces a Kanban board view of work items — all without requiring a browser to be open.
+
+The application shall:
+Poll Azure DevOps on a configurable interval for both PR events and work items
+Normalize author identities before rule evaluation to handle inconsistent ADO identity formats
+Classify PR events into inboxes using expressive include/exclude rules with keyword packs
+Maintain a system “Needs My Attention” inbox above all user-defined inboxes
+Surface selected inboxes as Windows toast notifications with per-inbox unread counts in the tray menu
+Support PR mute and snooze to suppress noise for specific PRs or authors
+Collapse repeated bot or system events into grouped inbox rows
+Display a Kanban board with aging indicators and quick-toggle view filters
+Provide a debug/audit window and a rule test mode to aid configuration
+
+This is a personal productivity tool. It is read-only toward Azure DevOps in v0.1.
+
+2. Goals
+2.1 Primary Goals
+Surface the right PR activity at the right time, with minimal noise
+Make the “Needs My Attention” inbox the single interruptive signal for reviewers
+Provide a board that shows work item age and staleness, not just state
+Make inbox rules easy to configure, test, and debug without code changes
+
+2.2 Secondary Goals
+Persist local state so duplicate notifications are never shown after restart
+Keep the app lightweight and easy to deploy as a single self-contained executable
+Support simple JSON-based config export/import
+
+2.3 Non-Goals
+Posting comments or editing PRs or work items from the app
+Full replacement of the Azure DevOps UI
+Cross-platform support in v0.1
+Real-time push via service hooks in v0.1
+
+3. High-Level Concept
+DevPulse runs two independent polling tracks:
+
+PR track
+Fetches pull requests and comment threads → normalizes author identities → classifies events by source and meaning → applies include/exclude inbox rules → collapses grouped events → stores results → raises toast notifications where enabled.
+
+Work item track
+Fetches work items for the configured area/iteration → stores them locally → computes days-in-state for aging → feeds the Kanban board window.
+
+A single SQLite database holds all local state. The app never writes back to Azure DevOps.
+
+4. Technology Stack
+4.1 Required
+.NET 8 or later, Windows
+WinForms (preferred for v0.1) or WPF
+Azure DevOps REST API — PR and Work Item endpoints
+Windows toast notifications
+
+4.2 Recommended Libraries
+Library
+Purpose
+System.Text.Json
+Serialization
+HttpClient
+REST API calls
+Microsoft.Data.Sqlite
+Local persistence
+CommunityToolkit.WinUI.Notifications
+Toast notifications
+Serilog
+Structured application logging
+
+4.3 API Versioning
+All Azure DevOps REST API version strings shall be defined in a single static class. They must not be scattered across the codebase.
+
+5. Functional Requirements
+5.1 Authentication
+Authenticate using a Personal Access Token (PAT)
+Store the PAT via Windows DPAPI or Credential Manager — never plain text
+Allow the user to update the PAT from Settings
+
+5.2 Polling
+PR polling interval: configurable, default 5 minutes
+Work item polling interval: configurable, default 10 minutes
+Manual “Refresh now” available per track
+Overlapping refreshes per track are skipped, not queued
+Last successful poll timestamp recorded per track
+
+5.3 Author Identity Normalization
+Azure DevOps returns author identities in inconsistent formats across endpoints (display name, email, service account name, renamed account). Before any rule evaluation, DevPulse shall normalize all author references to a canonical identity key.
+
+Normalization shall:
+Prefer the uniqueName (email) as the canonical key
+Fall back to displayName if uniqueName is absent
+Apply user-defined alias mappings from Settings to merge variant forms
+Mark identities with EventSource = Bot if the display name or unique name matches a configured bot pattern
+
+Example alias mapping in settings:
+"aliases": [
+  { "canonical": "john.smith@company.com",
+    "variants": ["John Smith", "Smith, John", "jsmith"] }
+]
+
+5.4 Event Source and Meaning Classification
+Before inbox rule evaluation, each normalized event shall be tagged with two orthogonal attributes:
+
+Attribute
+Values
+Notes
+EventSource
+Human, Bot, System
+Set during identity normalization
+EventMeaning
+Comment, Merged, Abandoned, VoteChanged, ReviewerAdded, Mention, Blocked
+Derived from event type and content
+
+Rules may filter on EventSource and EventMeaning directly, in addition to author/message/repo fields. This makes common patterns concise:
+All Bot comments → Code Rabbit
+All Human comments → Prioritized
+EventMeaning = Merged → Merged PRs
+
+5.5 PR Events to Detect
+Event
+EventMeaning
+Priority
+PR comment added
+Comment
+Required
+PR thread updated
+Comment
+Required
+PR completed / merged
+Merged
+Required
+PR abandoned
+Abandoned
+Required
+Reviewer added
+ReviewerAdded
+Required
+Reviewer vote changed
+VoteChanged or Blocked
+Required
+User @mention in comment text
+Mention
+Required
+PR created
+Comment
+Optional v0.1
+PR reopened
+Comment
+Optional v0.1
+
+5.6 Needs My Attention — System Inbox
+A built-in, non-deletable inbox that sits above all user-defined inboxes and is evaluated first. It catches events that require direct reviewer action.
+
+Default catch conditions:
+The current user is listed as a reviewer on the PR
+AND one of the following is true:
+A human commented after the user’s last action on that PR
+A reviewer vote changed to Blocked or Waiting for Author
+EventSource = Human AND EventMeaning = Comment AND author is in the configured PO/QA group
+Comment text matches any keyword in the configured “needs attention” keyword pack
+
+Notifications for this inbox are always enabled and cannot be disabled. The tray icon badge reflects its unread count.
+
+5.7 Inbox Rule Model
+5.7.1 Rule fields
+Field
+Type
+Description
+Enabled
+bool
+Skip this rule if false
+EventSourceEquals
+EventSource?
+Match Human, Bot, or System
+EventMeaningEquals
+EventMeaning?
+Match by semantic meaning
+AuthorEquals
+string?
+Exact canonical identity match
+AuthorContains
+string?
+Substring match on canonical identity
+ExcludeAuthorContains
+string?
+Exclude if author contains this
+MessageContainsAny
+List<string>?
+Match if message contains any keyword
+MessageContainsAll
+List<string>?
+Match only if message contains all keywords
+ExcludeMessageContains
+string?
+Exclude if message contains this
+RepositoryEquals
+string?
+Match specific repository
+ExcludeRepositoryEquals
+string?
+Exclude specific repository
+ProjectEquals
+string?
+Match specific project
+StatusEquals
+string?
+Match PR status string
+
+5.7.2 Rule semantics
+All non-empty include conditions in a rule must match (AND logic)
+If any exclude condition matches, the rule does not match regardless of includes
+An inbox matches if any of its rules match (OR across rules)
+Inboxes are evaluated in Order; first matching inbox wins
+Needs My Attention is always evaluated first and cannot be reordered
+A fallback inbox with no conditions must always exist as the last inbox
+
+5.7.3 Keyword packs
+MessageContainsAny and MessageContainsAll accept named keyword packs in addition to inline strings. Packs are defined in Settings and reusable across rules.
+
+Default keyword packs:
+Pack name
+Keywords
+needs-attention
+needs test, please review, ready for QA, please verify, ready for test
+blocking
+changes requested, blocked, waiting for author, do not merge
+positive
+approved, LGTM, looks good, ship it
+hotfix
+hotfix, urgent, critical, production issue
+
+5.8 Event Collapsing
+When multiple related events arrive in the same poll cycle for the same PR, DevPulse shall group them into a single inbox row rather than N separate rows.
+
+Collapse rules:
+Bot comments on the same PR within the same poll cycle collapse into one grouped event
+System events on the same PR (auto-complete, reviewer changes, merge) within a 5-minute window collapse into one summary event
+Each collapsed group stores a count; the inbox row displays it (e.g., “CodeRabbit added 14 comments on PR #552”)
+Expanding a collapsed row shows the individual events underneath
+Collapsed groups count as one item for unread count purposes
+
+5.9 PR Mute and Snooze
+Users may suppress future notifications for a specific PR or author without creating inbox rules.
+
+Action
+Scope
+Duration
+Mute this PR
+Single PR
+Permanent until manually cleared
+Snooze this PR
+Single PR
+Configurable: 1h, 4h, until tomorrow, custom
+Mute this author today
+Author canonical identity
+Until midnight local time
+Mute this author permanently
+Author canonical identity
+Permanent until cleared
+
+Muted/snoozed events are still stored locally but never surface as notifications or unread counts. They are visible in a dedicated “Muted” view accessible from Settings or the tray menu.
+
+5.10 Unread Counts in Tray Menu
+Each inbox entry in the tray menu shall show its current unread count in parentheses when greater than zero:
+View latest ▶
+  └ Needs My Attention  (3)
+  └ Prioritized          (1)
+  └ Code Rabbit         (17)
+  └ Merged PRs           (2)
+
+Counts update after every poll and after read actions. The tray tooltip also shows the Needs My Attention count.
+
+5.11 Mark as Read / Mark All as Seen
+Mark individual event as read from the Latest Events window (right-click or button)
+Mark all events in an inbox as read from the inbox toolbar
+Mute this PR for 1 day available as a right-click action on any event row
+IsRead and NotificationSent are both persisted; they are independent flags
+
+5.12 Open Related Work Item from PR Event
+In the Latest Events window, each PR event row shall offer a context menu with:
+Open PR in browser
+Open linked work item in browser (shown only if a work item link is resolved)
+Jump to work item on board (brings the board window to front and highlights the card)
+Snooze this PR
+Mute this PR
+
+5.13 Watchers
+Watchers are an explicit subscription layer that sits above the inbox rule engine. A watcher causes matching events to always land in a specified inbox (or Needs My Attention) regardless of normal rule order.
+
+Watcher type
+Example
+Watch author
+All events from john.smith@company.com → Prioritized
+Watch repository
+All events from repo ‘payments-api’ → Prioritized
+Watch PR title pattern
+PRs whose title matches ‘hotfix*’ → Needs My Attention
+Watch work item type
+All Feature work items → include on board
+Watch work item state
+All items entering ‘In Review’ → trigger notification
+
+Watchers are evaluated before inbox rules. A matching watcher short-circuits rule evaluation for that event.
+
+5.14 Kanban Board
+5.14.1 Data source
+Work items fetched via Azure DevOps Work Items REST API (/wit/workitems)
+Scoped by configured area path and optional iteration
+Supported types: Feature, Bug, Task, User Story (configurable)
+
+5.14.2 Board columns
+Column
+Default ADO states
+Feature Request
+New, Proposed
+Backlog
+Active (unassigned or future iteration)
+Doing
+Active (current iteration, assigned)
+In Review
+Resolved, In Review
+Done
+Closed, Completed
+
+5.14.3 Card display
+Work item ID and title (truncated with ellipsis)
+Type badge and priority badge
+Assignee initials circle
+Linked PR reference if resolved
+Days in current state (see Aging Indicators below)
+
+5.14.4 Aging indicators
+Each card displays how long the work item has been in its current state. Thresholds are configurable per column.
+
+Age
+Visual treatment
+Default threshold
+Fresh
+No indicator
+< 2 days
+Aging
+Amber badge showing day count
+2–5 days
+Stale
+Red badge + card border highlight
+6+ days
+
+Stale thresholds are configurable per column in Settings. Days are counted from the last state transition, not the work item creation date.
+
+5.14.5 Quick-toggle view filters
+The board toolbar shall include one-click toggle buttons that apply as view filters (not saved settings):
+Toggle
+Effect
+Mine only
+Show only items assigned to the current user
+Current sprint
+Show only items in the active iteration
+Bugs only
+Show only Bug type items
+Unassigned only
+Show only items with no assignee
+
+5.14.6 PR–work item linkage
+When a PR description, branch name, or commit message contains a work item reference (e.g., AB#512), the board card for that item shall show the linked PR number and reviewer status. Best-effort in v0.1; cards render without it if the link cannot be resolved.
+
+5.14.7 Board interactions
+Double-click or context menu to open work item in browser
+Filter bar: text search, type, assignee, priority
+Non-matching cards are dimmed (not hidden) so column counts remain visible
+Refresh button triggers immediate work item poll
+Read-only in v0.1 — no drag-and-drop state changes
+
+5.15 Tray Menu
+Refresh now ▶
+  └ Refresh PRs
+  └ Refresh board
+View latest ▶
+  └ Needs My Attention  (3)
+  └ Prioritized          (1)
+  └ Code Rabbit         (17)
+  └ Merged PRs           (2)
+Open board
+Muted PRs
+Open Azure DevOps
+Debug window
+Settings
+Exit
+
+5.16 Notifications
+Needs My Attention: always enabled, cannot be disabled
+All other inboxes: per-inbox enable/disable
+Only newly detected, non-muted, non-snoozed events generate notifications
+Previously seen events never notify again, including after restart
+Collapsed event groups count as one notification
+
+5.17 Debug and Audit Window
+A dedicated window accessible from the tray menu and from Settings, primarily intended for rule debugging and diagnostics. It shall display:
+
+Section
+Contents
+Poll status
+Last poll time per track, next scheduled poll, API call count per session
+Event log
+All events discovered in the last N polls: ID, type, author, inbox assigned
+Rule trace
+For each event: which inbox matched, which rule matched, and why
+Identity log
+Author identity normalization decisions and alias matches
+Mute log
+Currently muted/snoozed PRs and authors with expiry times
+
+Rule trace example entry:
+Event pr:552:thread:14:comment:3
+  Author: coderabbit@coderabbitai.bot -> canonical: coderabbitai.bot [Bot]
+  EventSource: Bot | EventMeaning: Comment
+  Inbox matched: 'Code Rabbit'
+  Rule matched: EventSourceEquals = Bot
+
+The debug window is read-only. Log entries are kept for the last 500 events and cleared on app restart.
+
+5.18 Rule Test Mode
+Available in Settings → Inboxes → Test rules. The user may:
+Select any recent stored event from a dropdown
+Or paste a sample author name and message text manually
+
+The app shall display:
+Normalized identity and EventSource/EventMeaning classification
+Which inbox would be assigned
+Which specific rule matched, with all conditions listed
+If no rule matched, which fallback inbox would apply and why
+
+6. User Experience Requirements
+6.1 Startup
+Load settings, create tray icon, start minimized to tray
+Optionally run initial sync on startup (configurable)
+Open Settings on first launch if no valid configuration exists
+
+6.2 Refresh Behavior
+Both polling tracks run fully asynchronously in the background
+Tray icon may animate briefly during refresh
+Errors must not crash the application; retry on next scheduled interval
+Board window shows stale-data banner if last work item poll failed
+
+6.3 Notification Content
+Toast text should be short and action-oriented. Examples:
+QA commented on PR #431 — needs test
+PR merged: Fix customer invoice rounding
+Reviewer blocked PR #198
+CodeRabbit added 14 comments on PR #552
+
+6.4 Latest Events Window
+Opens per inbox from the tray menu. Shows newest events first. Each row includes event icon, summary, PR title, author, timestamp, and collapsed count if applicable. Right-click context menu provides: Open PR, Open linked work item, Jump to board, Mark as read, Snooze PR, Mute PR.
+
+7. Architecture
+7.1 Main Components
+Component
+Responsibility
+TrayApplication
+App lifecycle, tray icon, context menu, unread counts
+PollingService
+Schedules and executes PR refresh cycles
+WorkItemPollingService
+Schedules and executes work item refresh cycles
+IdentityNormalizer
+Resolves ADO identities to canonical keys; sets EventSource
+AzureDevOpsClient
+PR REST endpoints and DTO mapping
+WorkItemClient
+Work item REST endpoints and DTO mapping
+EventNormalizer
+Converts ADO entities to normalized DevOpsEvent; sets EventMeaning
+WorkItemNormalizer
+Converts ADO work item DTOs to normalized WorkItem; computes days-in-state
+RuleEngine
+Evaluates watchers then inbox rules against each event
+EventCollapser
+Groups related events within a poll cycle into collapsed rows
+MuteService
+Tracks and enforces PR and author mutes/snoozes
+NotificationService
+Shows Windows toast notifications
+StateStore
+Persists all local state to SQLite
+InboxViewService
+Loads latest events for a selected inbox
+BoardViewService
+Groups work items by column; computes aging
+SettingsService
+Loads and saves settings and keyword packs
+DebugLogService
+Records poll results, rule traces, identity decisions
+
+7.2 PR Data Flow
+PollingService triggers; guard prevents overlap
+AzureDevOpsClient fetches relevant PRs and threads
+IdentityNormalizer resolves all authors to canonical identities and EventSource
+EventNormalizer produces normalized DevOpsEvent records with EventMeaning
+StateStore filters out already-known EventIds
+MuteService filters out muted/snoozed PR events
+EventCollapser groups remaining events by PR and source within the poll window
+RuleEngine evaluates watchers, then Needs My Attention, then user inboxes in order
+StateStore persists events with assigned inbox
+NotificationService raises toasts for events whose inbox allows it
+TrayApplication updates unread counts in tray menu
+DebugLogService records trace for each event
+
+7.3 Work Item Data Flow
+WorkItemPollingService triggers; guard prevents overlap
+WorkItemClient fetches items via WIQL for configured area/iteration
+WorkItemNormalizer produces WorkItem records with days-in-state computed from state transition date
+WorkItemNormalizer attempts to resolve linked PR IDs from work item relations
+StateStore upserts all work items by Id
+BoardViewService groups items by column mapping and applies aging thresholds
+Board window refreshes if open; stale-data banner cleared
+
+8. Data Models
+8.1 DevOpsEvent
+public sealed class DevOpsEvent
+{
+    public string EventId { get; set; }
+    public DevOpsEventType EventType { get; set; }
+    public EventSource EventSource { get; set; }        // Human | Bot | System
+    public EventMeaning EventMeaning { get; set; }      // Comment | Merged | ...
+    public string InboxName { get; set; }
+    public bool IsCollapsed { get; set; }
+    public int CollapsedCount { get; set; }
+    public int PullRequestId { get; set; }
+    public string PullRequestTitle { get; set; }
+    public string PullRequestUrl { get; set; }
+    public string Organization { get; set; }
+    public string Project { get; set; }
+    public string Repository { get; set; }
+    public string AuthorDisplayName { get; set; }
+    public string AuthorCanonicalKey { get; set; }      // normalized identity
+    public string MessageText { get; set; }
+    public string Status { get; set; }
+    public DateTimeOffset CreatedAtUtc { get; set; }
+    public DateTimeOffset DiscoveredAtUtc { get; set; }
+    public string SourceThreadId { get; set; }
+    public string SourceCommentId { get; set; }
+    public string? LinkedWorkItemId { get; set; }
+    public bool NotificationSent { get; set; }
+    public bool IsRead { get; set; }
+    public string? MatchedRuleDescription { get; set; } // for debug log
+}
+
+8.2 EventSource and EventMeaning
+public enum EventSource  { Unknown, Human, Bot, System }
+
+public enum EventMeaning
+{
+    Unknown, Comment, Merged, Abandoned,
+    VoteChanged, Blocked, ReviewerAdded, Mention
+}
+
+8.3 DevOpsEventType
+public enum DevOpsEventType
+{
+    Unknown = 0, PullRequestCreated = 1, PullRequestCompleted = 2,
+    PullRequestAbandoned = 3, CommentAdded = 4, ThreadUpdated = 5,
+    ReviewerAdded = 6, ReviewerVoteChanged = 7
+}
+
+8.4 WorkItem
+public sealed class WorkItem
+{
+    public int Id { get; set; }
+    public string Title { get; set; }
+    public WorkItemType Type { get; set; }
+    public string State { get; set; }
+    public string BoardColumn { get; set; }
+    public string Priority { get; set; }
+    public string AssignedToDisplayName { get; set; }
+    public string AssignedToCanonicalKey { get; set; }
+    public string AreaPath { get; set; }
+    public string IterationPath { get; set; }
+    public string WorkItemUrl { get; set; }
+    public string? LinkedPullRequestId { get; set; }
+    public DateTimeOffset StateChangedAtUtc { get; set; }
+    public int DaysInCurrentState { get; set; }         // computed
+    public AgingLevel AgingLevel { get; set; }          // Fresh | Aging | Stale
+    public DateTimeOffset DiscoveredAtUtc { get; set; }
+}
+
+8.5 Supporting Enums and Models
+public enum WorkItemType  { Unknown, Feature, Bug, Task, UserStory }
+public enum AgingLevel    { Fresh, Aging, Stale }
+
+public sealed class BoardColumnDefinition
+{
+    public string Name { get; set; }
+    public int Order { get; set; }
+    public List<string> MappedStates { get; set; }
+    public int AgingDaysWarning { get; set; }   // default 2
+    public int AgingDaysStale { get; set; }     // default 6
+}
+
+public sealed class IdentityAlias
+{
+    public string CanonicalKey { get; set; }
+    public List<string> Variants { get; set; }
+}
+
+public sealed class MuteEntry
+{
+    public MuteScope Scope { get; set; }  // PR | Author
+    public string Key { get; set; }       // PR id or canonical author key
+    public DateTimeOffset? ExpiresAtUtc { get; set; }  // null = permanent
+}
+
+public enum MuteScope { PullRequest, Author }
+
+9. Inbox and Rule Model
+9.1 InboxDefinition
+public sealed class InboxDefinition
+{
+    public string Name { get; set; }
+    public int Order { get; set; }
+    public bool IsSystemInbox { get; set; }   // true for Needs My Attention
+    public bool IsEnabled { get; set; }
+    public bool ShowNotifications { get; set; }
+    public int MaxItemsToRetain { get; set; } = 100;
+    public List<InboxRule> Rules { get; set; } = new();
+}
+
+9.2 InboxRule
+public sealed class InboxRule
+{
+    public bool Enabled { get; set; } = true;
+    // Source / meaning
+    public EventSource? EventSourceEquals { get; set; }
+    public EventMeaning? EventMeaningEquals { get; set; }
+    // Author includes
+    public string? AuthorEquals { get; set; }
+    public string? AuthorContains { get; set; }
+    // Author excludes
+    public string? ExcludeAuthorContains { get; set; }
+    // Message includes
+    public List<string>? MessageContainsAny { get; set; }
+    public List<string>? MessageContainsAll { get; set; }
+    // Message excludes
+    public string? ExcludeMessageContains { get; set; }
+    // Repo / project includes
+    public string? RepositoryEquals { get; set; }
+    public string? ProjectEquals { get; set; }
+    // Repo / project excludes
+    public string? ExcludeRepositoryEquals { get; set; }
+    public string? StatusEquals { get; set; }
+}
+
+9.3 Watcher
+public sealed class Watcher
+{
+    public WatcherType Type { get; set; }
+    public string Pattern { get; set; }       // substring or glob
+    public string TargetInbox { get; set; }   // inbox name or "NeedsMyAttention"
+}
+
+public enum WatcherType
+{
+    Author, Repository, PrTitlePattern,
+    WorkItemType, WorkItemState
+}
+
+9.4 KeywordPack
+public sealed class KeywordPack
+{
+    public string Name { get; set; }
+    public List<string> Keywords { get; set; }
+}
+
+10. Core Interfaces
+10.1 IAzureDevOpsClient
+public interface IAzureDevOpsClient
+{
+    Task<IReadOnlyList<AzurePullRequestDto>>
+        GetRelevantPullRequestsAsync(CancellationToken ct);
+    Task<IReadOnlyList<AzurePullRequestThreadDto>>
+        GetPullRequestThreadsAsync(int prId, string repoId, CancellationToken ct);
+}
+
+10.2 IWorkItemClient
+public interface IWorkItemClient
+{
+    Task<IReadOnlyList<AzureWorkItemDto>>
+        GetWorkItemsAsync(string areaPath, string? iterationPath, CancellationToken ct);
+}
+
+10.3 IStateStore
+public interface IStateStore
+{
+    // PR events
+    Task<bool> EventExistsAsync(string eventId, CancellationToken ct);
+    Task SaveEventsAsync(IEnumerable<DevOpsEvent> events, CancellationToken ct);
+    Task<IReadOnlyList<DevOpsEvent>> GetLatestEventsForInboxAsync(
+        string inboxName, int maxCount, CancellationToken ct);
+    Task MarkEventsReadAsync(IEnumerable<string> eventIds, CancellationToken ct);
+    // Work items
+    Task UpsertWorkItemsAsync(IEnumerable<WorkItem> items, CancellationToken ct);
+    Task<IReadOnlyList<WorkItem>> GetWorkItemsAsync(CancellationToken ct);
+    // Mutes
+    Task SaveMuteEntryAsync(MuteEntry entry, CancellationToken ct);
+    Task<IReadOnlyList<MuteEntry>> GetActiveMutesAsync(CancellationToken ct);
+    // Poll metadata
+    Task<DateTimeOffset?> GetLastSuccessfulPollAsync(string track, CancellationToken ct);
+    Task SetLastSuccessfulPollAsync(string track, DateTimeOffset ts, CancellationToken ct);
+}
+
+10.4 INotificationService
+public interface INotificationService
+{
+    Task ShowAsync(DevOpsEvent devOpsEvent, CancellationToken ct);
+}
+
+11. Deduplication Strategy
+Event
+EventId pattern
+Comment
+pr:{prId}:thread:{threadId}:comment:{commentId}
+PR state change
+pr:{prId}:status:{status}:at:{timestamp}
+Reviewer added
+pr:{prId}:reviewer:{reviewerId}:added
+Reviewer vote changed
+pr:{prId}:reviewer:{reviewerId}:vote:{vote}:at:{ts}
+Collapsed group
+pr:{prId}:collapsed:{source}:poll:{pollTimestamp}
+
+Work items do not require deduplication; the store upserts by work item Id on every poll.
+
+12. Storage
+12.1 Engine
+SQLite via Microsoft.Data.Sqlite. All tables are created on first launch. The database file lives in the user’s local app data folder.
+
+12.2 Tables
+Table
+Contents
+events
+Normalized DevOpsEvent rows; indexed by EventId and InboxName
+work_items
+Normalized WorkItem rows; upserted by Id; includes DaysInCurrentState
+mute_entries
+MuteEntry rows; expired entries cleaned up on each poll
+poll_state
+Last successful poll timestamp keyed by track (prs, workitems)
+pr_snapshots
+Last known PR status/vote snapshot for change detection
+settings
+JSON blob: AppSettings
+inbox_definitions
+JSON blob: List<InboxDefinition>
+board_columns
+JSON blob: List<BoardColumnDefinition>
+keyword_packs
+JSON blob: List<KeywordPack>
+identity_aliases
+JSON blob: List<IdentityAlias>
+watchers
+JSON blob: List<Watcher>
+
+13. UI Specification
+13.1 Tray Icon
+Visible at all times while app is running
+Tooltip: “DevPulse — Needs My Attention: N — Last sync: HH:MM”
+Icon badge or overlay when Needs My Attention count > 0 (implementation-dependent)
+
+13.2 Latest Events Window
+Opens per inbox from the tray menu
+Newest events first; collapsed groups show as single expandable rows
+Toolbar: Mark all as read, Refresh, Close
+Right-click context menu: Open PR, Open linked work item, Jump to board, Mark as read, Snooze PR, Mute PR
+
+13.3 Kanban Board Window
+Horizontally scrollable column grid; one panel per column
+Column header: name + item count + aging summary (N stale)
+Card shows ID, title, type, priority, assignee, linked PR, aging badge
+Toolbar: Mine only, Current sprint, Bugs only, Unassigned only (toggle buttons), plus text filter
+Refresh button and Open in DevOps button
+
+13.4 Settings Window
+Tabs: Connection | Polling | Identities | Inboxes | Board | Notifications | Advanced
+
+Tab
+Key settings
+Connection
+Org URL, project, repo filter, PAT, current user, test connection
+Polling
+PR interval, work item interval, startup refresh
+Identities
+Alias mappings, bot identity patterns, PO/QA group definition
+Inboxes
+List, add/edit/delete, reorder, rule editor, keyword packs, rule test mode
+Board
+Area path, iteration filter, column definitions with aging thresholds, item types
+Notifications
+Per-inbox enable/disable, Needs My Attention always on (greyed out)
+Advanced
+Max events retained, debug log size, export/import settings JSON
+
+13.5 Debug and Audit Window
+Accessible from tray menu and Settings → Advanced
+Tabs: Poll status | Event log | Rule traces | Identity log | Mute log
+All data is read-only; last 500 events retained in memory, cleared on restart
+Copy to clipboard button on each log entry
+
+14. Refresh Algorithms
+14.1 PR Refresh
+Guard: if already running, exit
+Fetch relevant PRs from AzureDevOpsClient
+For each PR: compare status/votes with pr_snapshots; emit status/vote events if changed
+Fetch comment threads; emit comment events for unseen thread/comment IDs
+IdentityNormalizer resolves all authors; sets EventSource on each event
+EventNormalizer sets EventMeaning on each event
+Filter out EventIds already in the store
+MuteService removes muted/snoozed events
+EventCollapser groups remaining events by PR + source within poll window
+RuleEngine: evaluate watchers first, then Needs My Attention, then user inboxes in order
+Persist events with InboxName and MatchedRuleDescription
+NotificationService raises toasts where inbox.ShowNotifications = true
+TrayApplication refreshes unread counts in context menu
+DebugLogService records trace for each event
+Update last successful PR poll timestamp
+
+14.2 Work Item Refresh
+Guard: if already running, exit
+Fetch work items via WIQL for configured area/iteration
+WorkItemNormalizer: compute DaysInCurrentState from StateChangedAtUtc; set AgingLevel
+Attempt to resolve LinkedPullRequestId from work item relations
+Upsert all work items in StateStore
+BoardViewService groups items by column; applies aging thresholds
+Board window redraws if open; stale-data banner cleared
+Update last successful work item poll timestamp
+
+15. Suggested Project Structure
+DevPulse/
+  DevPulse.App/
+    Program.cs
+    TrayApplicationContext.cs
+    Forms/
+      SettingsForm.cs
+      InboxEventsForm.cs
+      BoardForm.cs
+      DebugWindow.cs
+    Services/
+      PollingService.cs
+      WorkItemPollingService.cs
+      NotificationService.cs
+      SettingsService.cs
+    UI/
+      TrayMenuBuilder.cs
+      BoardColumnPanel.cs
+      WorkItemCard.cs
+
+  DevPulse.Core/
+    Models/
+      DevOpsEvent.cs
+      WorkItem.cs
+      BoardColumnDefinition.cs
+      InboxDefinition.cs
+      InboxRule.cs
+      Watcher.cs
+      KeywordPack.cs
+      IdentityAlias.cs
+      MuteEntry.cs
+      AppSettings.cs
+    Enums/
+      DevOpsEventType.cs
+      EventSource.cs
+      EventMeaning.cs
+      WorkItemType.cs
+      AgingLevel.cs
+      MuteScope.cs
+      WatcherType.cs
+    Services/
+      RuleEngine.cs
+      EventNormalizer.cs
+      WorkItemNormalizer.cs
+      IdentityNormalizer.cs
+      EventCollapser.cs
+      MuteService.cs
+      BoardViewService.cs
+      DebugLogService.cs
+    Interfaces/
+      IStateStore.cs
+      IAzureDevOpsClient.cs
+      IWorkItemClient.cs
+      INotificationService.cs
+
+  DevPulse.Infrastructure/
+    AzureDevOps/
+      AzureDevOpsClient.cs
+      WorkItemClient.cs
+      AzureDevOpsDtos.cs
+      WorkItemDtos.cs
+      ApiVersions.cs           <- single source of truth for API version strings
+    Persistence/
+      SqliteStateStore.cs
+      DbSchema.cs
+    Notifications/
+      WindowsToastNotificationService.cs
+    Security/
+      SecretStore.cs
+
+16. Error Handling
+Application must not crash on network failures, auth failures, malformed config, or partial API failures
+Log error, keep tray app running, retry on next scheduled interval
+Auth failure: suppress repeated popups, mark status as disconnected, surface quick link to Settings
+Work item poll failure: board window shows non-intrusive stale-data banner; cached data remains visible
+PR poll failure: inbox views continue to show last cached events
+DebugLogService records all exceptions with context
+
+17. Security Requirements
+PAT stored via DPAPI or Windows Credential Manager; never in plain text
+Logs must never contain the PAT
+Settings JSON export must redact the PAT unless explicitly confirmed by the user
+Identity alias data is local only; it is not sent to Azure DevOps
+
+18. Performance Requirements
+All polling runs asynchronously; UI remains responsive at all times
+Overlapping refreshes per track are skipped, not queued
+Board window opens immediately from cached local data; no live API call on open
+EventCollapser must complete within the poll cycle before notifications fire
+SQLite queries for inbox views must return within 100ms under normal load
+
+19. MVP Acceptance Criteria
+The v0.1 MVP is accepted when all of the following are true:
+User can configure org, project, PAT, poll intervals, and user identity
+App runs in Windows tray with tray icon and context menu
+App polls PRs every 5 minutes and work items every 10 minutes by default
+App detects: new PR comments, reviewer vote changes, PR completed, PR abandoned
+Needs My Attention inbox is present, non-deletable, and evaluated first
+CodeRabbit and other bot comments do not appear in Needs My Attention or Prioritized
+Inbox rules support ExcludeAuthorContains and MessageContainsAny
+Tray menu shows unread counts per inbox
+New events notify only once; restart never re-notifies old events
+User can mark events as read individually and mark all as read per inbox
+User can mute a PR permanently and snooze a PR for a configurable duration
+Bot events on the same PR in the same poll cycle are collapsed into one row
+Kanban board window opens from tray menu and shows work items in correct columns
+Board cards show days-in-state and aging badge (amber / red) above configured threshold
+Board quick-toggle filters (Mine only, Current sprint, Bugs only, Unassigned) work correctly
+Clicking a PR event offers “Open linked work item” when a link is resolved
+Debug window shows rule trace explaining why each event landed in its inbox
+Rule test mode in Settings correctly predicts inbox assignment for a given input
+
+20. Default Configuration
+Setting
+Default value
+PR polling interval
+5 minutes
+Work item polling interval
+10 minutes
+Inbox: Needs My Attention
+System inbox, always first, notifications always on
+Inbox: Code Rabbit
+EventSource = Bot, notifications off
+Inbox: Merged PRs
+EventMeaning = Merged, notifications on
+Inbox: Prioritized
+Fallback catch-all, notifications on
+Keyword pack: needs-attention
+needs test, please review, ready for QA, please verify, ready for test
+Keyword pack: blocking
+changes requested, blocked, waiting for author, do not merge
+Board column: Feature Request
+States: New, Proposed — stale after 6 days
+Board column: Backlog
+States: Active (future/unassigned) — stale after 6 days
+Board column: Doing
+States: Active (current, assigned) — stale after 4 days
+Board column: In Review
+States: Resolved, In Review — stale after 2 days
+Board column: Done
+States: Closed, Completed — no aging
+Aging warning threshold
+2 days (configurable per column)
+Aging stale threshold
+6 days (configurable per column)
+Max events retained per inbox
+100
+Debug log retention
+500 events, cleared on restart
+
+21. Recommended Future Enhancements
+Drag-and-drop card movement to change work item state
+Sprint switcher on the board without opening Settings
+Board swimlanes by assignee or priority
+Service-hook push mode instead of polling
+Regex support in inbox rule conditions
+Linked work item count shown on PR event rows in inbox views
+Snooze reminder: re-surface a snoozed PR when the snooze expires
+Auto-cleanup of events older than N days
+Dark mode settings window
+System tray badge count overlay (Windows 11 taskbar badge)
+Export / import rule sets independently of full settings
+Watcher-triggered notifications for work item state changes
+
+22. Implementation Notes
+Normalize author identities before any rule evaluation. Rules that rely on raw display names will be brittle.
+EventSource and EventMeaning are set during normalization and must be treated as immutable after that point.
+Keep the rule engine data-driven. There must be no hardcoded author or message checks outside of default seeding.
+The “first matching inbox wins” invariant is enforced by RuleEngine. No other component should assign inboxes.
+Watchers short-circuit rule evaluation. Document this clearly in code comments to avoid confusion.
+The PR and work item polling tracks are fully independent. A failure or hang in one must never affect the other.
+The board window must always open instantly from local cache. Never make a live API call on window open.
+EventCollapser must run after identity normalization and before RuleEngine. Collapsed events must carry the correct EventSource and EventMeaning of their constituent events.
+MuteService must be checked after collapsing and before notification. A muted PR should never produce a toast.
+MatchedRuleDescription should be a short human-readable string suitable for display in the debug log, e.g. “EventSourceEquals=Bot”.
+The debug window is for diagnostics only. It must never affect polling, rule evaluation, or notification behavior.
