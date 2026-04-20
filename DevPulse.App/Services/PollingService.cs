@@ -195,15 +195,22 @@ public sealed class PollingService : PollingLoopBase
         Log.Information("Poll 'prs': {PrCount} PRs, {Candidates} candidate events, {New} new, {Muted} muted, {Saved} saved",
             prs.Count, allNewEvents.Count, newEvents.Count, newEvents.Count - unmuted.Count, collapsed.Count);
 
+        var notifiedIds = new List<string>();
         foreach (var evt in collapsed)
         {
             var inbox = inboxes.FirstOrDefault(i => i.Name == evt.InboxName);
             if (inbox?.ShowNotifications == true)
             {
-                try { await _notifications.ShowAsync(evt); }
+                try
+                {
+                    await _notifications.ShowAsync(evt);
+                    notifiedIds.Add(evt.EventId);
+                }
                 catch (Exception ex) { Log.Warning(ex, "Notification failed for event {EventId}", evt.EventId); }
             }
         }
+        if (notifiedIds.Count > 0)
+            await _store.MarkNotificationSentAsync(notifiedIds, ct);
 
         await _store.CleanStaleSnapshotsAsync(30, ct);
 
