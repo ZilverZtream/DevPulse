@@ -229,8 +229,8 @@ public sealed class TrayApplicationContext : ApplicationContext
         if (disposing)
         {
             _trayIcon?.Dispose();
-            _prPoller?.DisposeAsync().AsTask().GetAwaiter().GetResult();
-            _wiPoller?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            _prPoller?.Dispose();
+            _wiPoller?.Dispose();
         }
         base.Dispose(disposing);
     }

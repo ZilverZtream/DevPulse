@@ -305,17 +305,21 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
             await using var cmd = _conn.CreateCommand();
             cmd.CommandText = "SELECT scope, key, expires_at, pr_id, author_key FROM mute_entries";
             await using var reader = await cmd.ExecuteReaderAsync(ct);
+            var ordScope = reader.GetOrdinal("scope");
+            var ordExp = reader.GetOrdinal("expires_at");
+            var ordPrId = reader.GetOrdinal("pr_id");
+            var ordAuthorKey = reader.GetOrdinal("author_key");
             var list = new List<MuteEntry>();
             var now = DateTimeOffset.UtcNow;
             while (await reader.ReadAsync(ct))
             {
-                var exp = reader.IsDBNull(2) ? (DateTimeOffset?)null : DateTimeOffset.Parse(reader.GetString(2));
+                var exp = reader.IsDBNull(ordExp) ? (DateTimeOffset?)null : DateTimeOffset.Parse(reader.GetString(ordExp));
                 if (exp.HasValue && exp.Value <= now) continue;
                 list.Add(new MuteEntry
                 {
-                    Scope = (MuteScope)reader.GetInt32(0),
-                    PrId = reader.IsDBNull(3) ? null : reader.GetInt32(3),
-                    AuthorKey = reader.IsDBNull(4) ? string.Empty : reader.GetString(4),
+                    Scope = (MuteScope)reader.GetInt32(ordScope),
+                    PrId = reader.IsDBNull(ordPrId) ? null : reader.GetInt32(ordPrId),
+                    AuthorKey = reader.IsDBNull(ordAuthorKey) ? string.Empty : reader.GetString(ordAuthorKey),
                     ExpiresAtUtc = exp
                 });
             }

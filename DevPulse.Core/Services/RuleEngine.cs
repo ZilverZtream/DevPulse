@@ -126,8 +126,8 @@ public sealed class RuleEngine
 
         if (rule.MessageContainsAll?.Count > 0)
         {
-            var keywords = ExpandKeywords(rule.MessageContainsAll, packs);
-            if (!keywords.All(k => evt.MessageText.Contains(k, StringComparison.OrdinalIgnoreCase)))
+            var keywords = ExpandKeywords(rule.MessageContainsAll, packs).ToList();
+            if (keywords.Count == 0 || !keywords.All(k => evt.MessageText.Contains(k, StringComparison.OrdinalIgnoreCase)))
                 return false;
         }
 
