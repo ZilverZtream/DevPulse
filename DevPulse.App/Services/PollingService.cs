@@ -129,7 +129,7 @@ public sealed class PollingService : PollingLoopBase
         var existingIds = await _store.GetExistingEventIdsAsync(allCandidateIds, ct);
 
         // Build comment events (skip already-known), save snapshots
-        var snapshotsByPrId = prSnapshots.ToDictionary(s => s.Pr.PullRequestId);
+        var snapshotsByPrId = prSnapshots.DistinctBy(s => s.Pr.PullRequestId).ToDictionary(s => s.Pr.PullRequestId);
         foreach (var (pr, threads) in prWithThreads)
         {
             var snapshotEntry = snapshotsByPrId[pr.PullRequestId];
