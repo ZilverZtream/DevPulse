@@ -72,7 +72,13 @@ public sealed class PollingService : PollingLoopBase
 
             if (prevVotesJson != null)
             {
-                var prevVotes = JsonSerializer.Deserialize<Dictionary<string, int>>(prevVotesJson) ?? [];
+                Dictionary<string, int> prevVotes;
+                try { prevVotes = JsonSerializer.Deserialize<Dictionary<string, int>>(prevVotesJson) ?? []; }
+                catch (JsonException ex)
+                {
+                    Log.Warning(ex, "PR {PrId} had corrupt vote snapshot; treating as empty", pr.PullRequestId);
+                    prevVotes = [];
+                }
                 foreach (var reviewer in pr.Reviewers)
                 {
                     if (string.IsNullOrEmpty(reviewer.Id)) continue;
