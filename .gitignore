@@ -21,3 +21,6 @@ artifacts/
 
 ## Secrets
 *.dpapi
+
+## Claude Code
+CLAUDE.md
