@@ -96,7 +96,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
                 cmd.Parameters.AddWithValue("@esrc", (int)e.EventSource);
                 cmd.Parameters.AddWithValue("@emean", (int)e.EventMeaning);
                 cmd.Parameters.AddWithValue("@inbox", e.InboxName);
-                cmd.Parameters.AddWithValue("@collapsed", e.IsCollapsed ? 1 : 0);
+                cmd.Parameters.AddWithValue("@collapsed", e.CollapsedCount > 1 ? 1 : 0);
                 cmd.Parameters.AddWithValue("@cnt", e.CollapsedCount);
                 cmd.Parameters.AddWithValue("@prid", e.PullRequestId);
                 cmd.Parameters.AddWithValue("@prtitle", e.PullRequestTitle);
@@ -427,7 +427,6 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
         EventSource = (PrEventSource)r.GetInt32(r.GetOrdinal("event_source")),
         EventMeaning = (EventMeaning)r.GetInt32(r.GetOrdinal("event_meaning")),
         InboxName = r.GetString(r.GetOrdinal("inbox_name")),
-        IsCollapsed = r.GetInt32(r.GetOrdinal("is_collapsed")) == 1,
         CollapsedCount = r.GetInt32(r.GetOrdinal("collapsed_count")),
         PullRequestId = r.GetInt32(r.GetOrdinal("pull_request_id")),
         PullRequestTitle = r.GetString(r.GetOrdinal("pull_request_title")),

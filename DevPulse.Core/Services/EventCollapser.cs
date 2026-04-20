@@ -71,7 +71,6 @@ public sealed class EventCollapser
             DiscoveredAtUtc = representative.DiscoveredAtUtc,
             LinkedWorkItemId = representative.LinkedWorkItemId,
             IsCurrentUserReviewer = representative.IsCurrentUserReviewer,
-            IsCollapsed = true,
             CollapsedCount = group.Count
         };
 

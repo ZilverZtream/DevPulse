@@ -9,8 +9,8 @@ public sealed class DevOpsEvent
     public PrEventSource EventSource { get; set; }
     public EventMeaning EventMeaning { get; set; }
     public string InboxName { get; set; } = string.Empty;
-    public bool IsCollapsed { get; set; }
     public int CollapsedCount { get; set; } = 1;
+    public bool IsCollapsed => CollapsedCount > 1;
     public int PullRequestId { get; set; }
     public string PullRequestTitle { get; set; } = string.Empty;
     public string PullRequestUrl { get; set; } = string.Empty;
