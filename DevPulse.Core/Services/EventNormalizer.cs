@@ -6,7 +6,7 @@ namespace DevPulse.Core.Services;
 
 public sealed class EventNormalizer
 {
-    public EventMeaning DeriveCommentMeaning(string messageText, string currentUserCanonicalKey, string authorCanonicalKey)
+    public EventMeaning DeriveCommentMeaning(string messageText, string currentUserCanonicalKey)
     {
         if (!string.IsNullOrEmpty(currentUserCanonicalKey) &&
             messageText.Contains($"@{currentUserCanonicalKey}", StringComparison.OrdinalIgnoreCase))

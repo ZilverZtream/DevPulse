@@ -97,7 +97,16 @@ public sealed class PollingService : PollingLoopBase
         var threadTasks = prs.Select(async pr =>
         {
             await fetchSemaphore.WaitAsync(ct);
-            try { return (pr, await _adoClient.GetPullRequestThreadsAsync(pr.PullRequestId, pr.RepositoryId, ct)); }
+            try
+            {
+                var threads = await _adoClient.GetPullRequestThreadsAsync(pr.PullRequestId, pr.RepositoryId, ct);
+                return (pr, threads);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Thread fetch failed for PR #{PrId}; treating as empty", pr.PullRequestId);
+                return (pr, (IReadOnlyList<PullRequestThreadDto>)[]);
+            }
             finally { fetchSemaphore.Release(); }
         }).ToArray();
         var prWithThreads = await Task.WhenAll(threadTasks);
@@ -118,9 +127,10 @@ public sealed class PollingService : PollingLoopBase
         var existingIds = await _store.GetExistingEventIdsAsync(allCandidateIds, ct);
 
         // Build comment events (skip already-known), save snapshots
+        var snapshotsByPrId = prSnapshots.ToDictionary(s => s.Pr.PullRequestId);
         foreach (var (pr, threads) in prWithThreads)
         {
-            var snapshotEntry = prSnapshots.First(s => s.Pr.PullRequestId == pr.PullRequestId);
+            var snapshotEntry = snapshotsByPrId[pr.PullRequestId];
             await _store.SavePrSnapshotAsync(pr.PullRequestId, pr.Status, JsonSerializer.Serialize(snapshotEntry.CurrVotes), ct);
 
             var currentUserIsReviewer = pr.Reviewers.Any(r =>
@@ -135,7 +145,7 @@ public sealed class PollingService : PollingLoopBase
 
                     var authorCanon = idNorm.Normalize(comment.Author);
                     var source = idNorm.ClassifySource(comment.Author);
-                    var meaning = _eventNorm.DeriveCommentMeaning(comment.Content, appSettings.CurrentUserCanonicalKey, authorCanon);
+                    var meaning = _eventNorm.DeriveCommentMeaning(comment.Content, appSettings.CurrentUserCanonicalKey);
 
                     allNewEvents.Add(new DevOpsEvent
                     {
