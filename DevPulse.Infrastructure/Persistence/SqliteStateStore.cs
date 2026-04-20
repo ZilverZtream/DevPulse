@@ -117,7 +117,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
                 cmd.Parameters.AddWithValue("@read", e.IsRead ? 1 : 0);
                 cmd.Parameters.AddWithValue("@rule", (object?)e.MatchedRuleDescription ?? DBNull.Value);
                 cmd.Parameters.AddWithValue("@reviewer", e.IsCurrentUserReviewer ? 1 : 0);
-                await cmd.ExecuteNonQueryAsync(ct);
+                await NonQueryRetryAsync(cmd, ct);
             }
             await tx.CommitAsync(ct);
         }
@@ -297,6 +297,17 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
         finally { _lock.Release(); }
     }
 
+    private static async Task<int> NonQueryRetryAsync(SqliteCommand cmd, CancellationToken ct)
+    {
+        try { return await cmd.ExecuteNonQueryAsync(ct); }
+        catch (SqliteException ex) when (ex.SqliteErrorCode is 5 or 6)
+        {
+            Log.Warning("SQLite busy (error {Code}); retrying write once", ex.SqliteErrorCode);
+            await Task.Delay(50, ct);
+            return await cmd.ExecuteNonQueryAsync(ct);
+        }
+    }
+
     public async Task<IReadOnlyList<MuteEntry>> GetActiveMutesAsync(CancellationToken ct = default)
     {
         await _lock.WaitAsync(ct);
@@ -373,7 +384,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
             cmd.Parameters.AddWithValue("@id", prId);
             cmd.Parameters.AddWithValue("@status", status);
             cmd.Parameters.AddWithValue("@votes", votesJson);
-            await cmd.ExecuteNonQueryAsync(ct);
+            await NonQueryRetryAsync(cmd, ct);
         }
         finally { _lock.Release(); }
     }
