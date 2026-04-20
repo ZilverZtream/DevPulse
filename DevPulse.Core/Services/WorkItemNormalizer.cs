@@ -11,6 +11,7 @@ public sealed partial class WorkItemNormalizer
     [GeneratedRegex(@"AB#(\d+)", RegexOptions.IgnoreCase)]
     private static partial Regex WorkItemRefRegex();
 
+    private static readonly HashSet<int> _warnedNoUniqueName = [];
     private static readonly Dictionary<string, WorkItemType> TypeMap = new(StringComparer.OrdinalIgnoreCase)
     {
         ["Feature"] = WorkItemType.Feature,
@@ -36,8 +37,9 @@ public sealed partial class WorkItemNormalizer
         var column = ResolveColumn(dto.State, columns);
         var aging = column != null ? ComputeAging(days, column) : AgingLevel.Fresh;
 
-        if (string.IsNullOrWhiteSpace(dto.AssignedToUniqueName) && !string.IsNullOrWhiteSpace(dto.AssignedToDisplayName))
-            Log.Warning("WorkItem {Id} has no UniqueName; using display name '{Name}' as canonical key — mutes may be orphaned on rename", dto.Id, dto.AssignedToDisplayName);
+        if (string.IsNullOrWhiteSpace(dto.AssignedToUniqueName) && !string.IsNullOrWhiteSpace(dto.AssignedToDisplayName)
+            && _warnedNoUniqueName.Add(dto.Id))
+            Log.Debug("WorkItem {Id} has no UniqueName; using display name '{Name}' as canonical key — mutes may be orphaned on rename", dto.Id, dto.AssignedToDisplayName);
 
         return new WorkItem
         {
@@ -76,16 +78,17 @@ public sealed partial class WorkItemNormalizer
     {
         foreach (var rel in relations)
         {
-            var m = WorkItemRefRegex().Match(rel.Url);
-            if (m.Success) return m.Groups[1].Value;
-
-            // Pull request link format: vstfs:///Git/PullRequestId/NNN
+            // Check vstfs:// PR link first (more specific)
             if (rel.Rel == "ArtifactLink" && rel.Url.Contains("PullRequestId", StringComparison.OrdinalIgnoreCase))
             {
                 var parts = rel.Url.Split('/');
                 if (parts.Length > 0 && int.TryParse(parts[^1], out _))
                     return parts[^1];
             }
+
+            // Fall back to AB# work item reference
+            var m = WorkItemRefRegex().Match(rel.Url);
+            if (m.Success) return m.Groups[1].Value;
         }
         return null;
     }
