@@ -2,6 +2,7 @@ using DevPulse.Core.Models;
 using DevPulse.Core.Services;
 using DevPulse.App.Services;
 using DevPulse.Core.Interfaces;
+using Serilog;
 
 namespace DevPulse.App.Forms;
 
@@ -48,10 +49,18 @@ public sealed class InboxEventsForm : Form
         var toolbar = new Panel { Height = 36, Dock = DockStyle.Top, BackColor = Color.FromArgb(42, 42, 60), Padding = new Padding(6, 4, 6, 4) };
 
         var btnMarkAll = DarkButton("Mark all as read");
-        btnMarkAll.Click += async (_, _) => await MarkAllReadAsync();
+        btnMarkAll.Click += async (_, _) =>
+        {
+            try { await MarkAllReadAsync(); }
+            catch (Exception ex) { Log.Error(ex, "Mark all read failed"); }
+        };
 
         var btnRefresh = DarkButton("Refresh");
-        btnRefresh.Click += async (_, _) => await LoadEventsAsync();
+        btnRefresh.Click += async (_, _) =>
+        {
+            try { await LoadEventsAsync(); }
+            catch (Exception ex) { Log.Error(ex, "Inbox refresh failed"); }
+        };
         btnRefresh.Left = btnMarkAll.Right + 8;
 
         toolbar.Controls.AddRange([btnMarkAll, btnRefresh]);
@@ -125,10 +134,26 @@ public sealed class InboxEventsForm : Form
             menu.Items.Add("Jump to work item on board", null, (_, _) => { _boardForm.Show(); _boardForm.BringToFront(); });
 
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Mark as read", null, async (_, _) => { await _viewService.MarkReadAsync([evt.EventId]); await LoadEventsAsync(); });
-        menu.Items.Add("Snooze PR (1h)", null, async (_, _) => await SnoozePrAsync(evt.PullRequestId, TimeSpan.FromHours(1)));
-        menu.Items.Add("Snooze PR (4h)", null, async (_, _) => await SnoozePrAsync(evt.PullRequestId, TimeSpan.FromHours(4)));
-        menu.Items.Add("Mute PR permanently", null, async (_, _) => await MutePrAsync(evt.PullRequestId));
+        menu.Items.Add("Mark as read", null, async (_, _) =>
+        {
+            try { await _viewService.MarkReadAsync([evt.EventId]); await LoadEventsAsync(); }
+            catch (Exception ex) { Log.Error(ex, "Mark read failed for event {EventId}", evt.EventId); }
+        });
+        menu.Items.Add("Snooze PR (1h)", null, async (_, _) =>
+        {
+            try { await SnoozePrAsync(evt.PullRequestId, TimeSpan.FromHours(1)); }
+            catch (Exception ex) { Log.Error(ex, "Snooze failed for PR #{PrId}", evt.PullRequestId); }
+        });
+        menu.Items.Add("Snooze PR (4h)", null, async (_, _) =>
+        {
+            try { await SnoozePrAsync(evt.PullRequestId, TimeSpan.FromHours(4)); }
+            catch (Exception ex) { Log.Error(ex, "Snooze failed for PR #{PrId}", evt.PullRequestId); }
+        });
+        menu.Items.Add("Mute PR permanently", null, async (_, _) =>
+        {
+            try { await MutePrAsync(evt.PullRequestId); }
+            catch (Exception ex) { Log.Error(ex, "Mute failed for PR #{PrId}", evt.PullRequestId); }
+        });
 
         menu.Show(_listView, e.Location);
     }
