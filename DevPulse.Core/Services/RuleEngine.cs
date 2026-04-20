@@ -1,5 +1,6 @@
 using DevPulse.Core.Enums;
 using DevPulse.Core.Models;
+using Serilog;
 using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 
@@ -17,12 +18,19 @@ public sealed class RuleEngine
         foreach (var watcher in watchers)
         {
             if (MatchesWatcher(evt, watcher))
-                return (watcher.TargetInbox, $"Watcher:{watcher.Type}={watcher.Pattern}");
+                return (watcher.TargetInbox, $"Watcher:{watcher.Type}={watcher.MatchValue}");
         }
 
         var systemInbox = inboxes.FirstOrDefault(i => i.IsSystemInbox);
-        if (systemInbox != null && MatchesNeedsMyAttention(evt, settings, keywordPacks))
-            return (systemInbox.Name, "NeedsMyAttention:SystemRule");
+        if (systemInbox != null)
+        {
+            if (MatchesNeedsMyAttention(evt, settings, keywordPacks))
+                return (systemInbox.Name, "NeedsMyAttention:SystemRule");
+        }
+        else if (MatchesNeedsMyAttention(evt, settings, keywordPacks))
+        {
+            Log.Warning("No system inbox configured; event {EventId} would have routed to NeedsMyAttention", evt.EventId);
+        }
 
         foreach (var inbox in inboxes.Where(i => !i.IsSystemInbox && i.IsEnabled).OrderBy(i => i.Order))
         {
@@ -61,7 +69,7 @@ public sealed class RuleEngine
         var attentionPack = packs.FirstOrDefault(p => p.Name.Equals(settings.NeedsAttentionKeywordPackName, StringComparison.OrdinalIgnoreCase));
         if (attentionPack != null)
         {
-            var keywords = ExpandKeywords(attentionPack.Keywords, packs).ToList();
+            var keywords = ExpandKeywords(attentionPack.Keywords, packs, expandPackRefs: false).ToList();
             if (keywords.Any(k => msg.Contains(k, StringComparison.OrdinalIgnoreCase)))
                 return true;
         }
@@ -71,9 +79,9 @@ public sealed class RuleEngine
 
     private static bool MatchesWatcher(DevOpsEvent evt, Watcher watcher) => watcher.Type switch
     {
-        WatcherType.Author => evt.AuthorCanonicalKey.Contains(watcher.Pattern, StringComparison.OrdinalIgnoreCase),
-        WatcherType.Repository => evt.Repository.Equals(watcher.Pattern, StringComparison.OrdinalIgnoreCase),
-        WatcherType.PrTitlePattern => MatchesGlob(evt.PullRequestTitle, watcher.Pattern),
+        WatcherType.Author => evt.AuthorCanonicalKey.Contains(watcher.MatchValue, StringComparison.OrdinalIgnoreCase),
+        WatcherType.Repository => evt.Repository.Equals(watcher.MatchValue, StringComparison.OrdinalIgnoreCase),
+        WatcherType.PrTitlePattern => MatchesGlob(evt.PullRequestTitle, watcher.MatchValue),
         _ => false
     };
 
@@ -124,10 +132,15 @@ public sealed class RuleEngine
         return true;
     }
 
-    private static IEnumerable<string> ExpandKeywords(IEnumerable<string> items, IReadOnlyList<KeywordPack> packs)
+    private static IEnumerable<string> ExpandKeywords(IEnumerable<string> items, IReadOnlyList<KeywordPack> packs, bool expandPackRefs = true)
     {
         foreach (var item in items)
         {
+            if (!expandPackRefs)
+            {
+                if (!string.IsNullOrWhiteSpace(item)) yield return item;
+                continue;
+            }
             var pack = packs.FirstOrDefault(p => p.Name.Equals(item, StringComparison.OrdinalIgnoreCase));
             if (pack != null)
             {
