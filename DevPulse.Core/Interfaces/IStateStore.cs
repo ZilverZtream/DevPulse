@@ -1,3 +1,4 @@
+using DevPulse.Core.Enums;
 using DevPulse.Core.Models;
 
 namespace DevPulse.Core.Interfaces;

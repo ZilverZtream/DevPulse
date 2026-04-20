@@ -1,0 +1,15 @@
+C:\Users\Dennis\source\repos\DevPulse\DevPulse.Infrastructure\obj\Debug\net8.0-windows10.0.17763.0\DevPulse.Infrastructure.csproj.AssemblyReference.cache
+C:\Users\Dennis\source\repos\DevPulse\DevPulse.Infrastructure\obj\Debug\net8.0-windows10.0.17763.0\DevPulse.Infrastructure.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\Dennis\source\repos\DevPulse\DevPulse.Infrastructure\obj\Debug\net8.0-windows10.0.17763.0\DevPulse.Infrastructure.AssemblyInfoInputs.cache
+C:\Users\Dennis\source\repos\DevPulse\DevPulse.Infrastructure\obj\Debug\net8.0-windows10.0.17763.0\DevPulse.Infrastructure.AssemblyInfo.cs
+C:\Users\Dennis\source\repos\DevPulse\DevPulse.Infrastructure\obj\Debug\net8.0-windows10.0.17763.0\DevPulse.Infrastructure.csproj.CoreCompileInputs.cache
+C:\Users\Dennis\source\repos\DevPulse\DevPulse.Infrastructure\bin\Debug\net8.0-windows10.0.17763.0\DevPulse.Infrastructure.deps.json
+C:\Users\Dennis\source\repos\DevPulse\DevPulse.Infrastructure\bin\Debug\net8.0-windows10.0.17763.0\DevPulse.Infrastructure.dll
+C:\Users\Dennis\source\repos\DevPulse\DevPulse.Infrastructure\bin\Debug\net8.0-windows10.0.17763.0\DevPulse.Infrastructure.pdb
+C:\Users\Dennis\source\repos\DevPulse\DevPulse.Infrastructure\bin\Debug\net8.0-windows10.0.17763.0\DevPulse.Core.dll
+C:\Users\Dennis\source\repos\DevPulse\DevPulse.Infrastructure\bin\Debug\net8.0-windows10.0.17763.0\DevPulse.Core.pdb
+C:\Users\Dennis\source\repos\DevPulse\DevPulse.Infrastructure\obj\Debug\net8.0-windows10.0.17763.0\DevPulse.73B961CD.Up2Date
+C:\Users\Dennis\source\repos\DevPulse\DevPulse.Infrastructure\obj\Debug\net8.0-windows10.0.17763.0\DevPulse.Infrastructure.dll
+C:\Users\Dennis\source\repos\DevPulse\DevPulse.Infrastructure\obj\Debug\net8.0-windows10.0.17763.0\refint\DevPulse.Infrastructure.dll
+C:\Users\Dennis\source\repos\DevPulse\DevPulse.Infrastructure\obj\Debug\net8.0-windows10.0.17763.0\DevPulse.Infrastructure.pdb
+C:\Users\Dennis\source\repos\DevPulse\DevPulse.Infrastructure\obj\Debug\net8.0-windows10.0.17763.0\ref\DevPulse.Infrastructure.dll

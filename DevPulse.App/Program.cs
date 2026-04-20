@@ -1,16 +1,33 @@
-namespace DevPulse.App;
+using DevPulse.App;
+using DevPulse.Infrastructure.Persistence;
+using Serilog;
 
-static class Program
+Application.SetHighDpiMode(HighDpiMode.SystemAware);
+Application.EnableVisualStyles();
+Application.SetCompatibleTextRenderingDefault(false);
+
+var logPath = Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+    "DevPulse", "logs", "devpulse-.log");
+
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Information()
+    .WriteTo.File(logPath, rollingInterval: RollingInterval.Day, retainedFileCountLimit: 7)
+    .CreateLogger();
+
+try
 {
-    /// <summary>
-    ///  The main entry point for the application.
-    /// </summary>
-    [STAThread]
-    static void Main()
-    {
-        // To customize application configuration such as set high DPI settings or default font,
-        // see https://aka.ms/applicationconfiguration.
-        ApplicationConfiguration.Initialize();
-        Application.Run(new Form1());
-    }    
+    var store = new SqliteStateStore(DbSchema.DbPath);
+    await store.InitializeAsync();
+
+    Application.Run(new TrayApplicationContext(store));
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "Unhandled startup exception");
+    MessageBox.Show($"DevPulse failed to start:\n{ex.Message}", "DevPulse", MessageBoxButtons.OK, MessageBoxIcon.Error);
+}
+finally
+{
+    await Log.CloseAndFlushAsync();
 }
