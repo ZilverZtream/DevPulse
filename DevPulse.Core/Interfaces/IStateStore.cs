@@ -6,6 +6,7 @@ namespace DevPulse.Core.Interfaces;
 public interface IStateStore
 {
     Task<bool> EventExistsAsync(string eventId, CancellationToken ct = default);
+    Task<HashSet<string>> GetExistingEventIdsAsync(IEnumerable<string> candidateIds, CancellationToken ct = default);
     Task SaveEventsAsync(IEnumerable<DevOpsEvent> events, CancellationToken ct = default);
     Task<IReadOnlyList<DevOpsEvent>> GetLatestEventsForInboxAsync(string inboxName, int maxCount, CancellationToken ct = default);
     Task MarkEventsReadAsync(IEnumerable<string> eventIds, CancellationToken ct = default);

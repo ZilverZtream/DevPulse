@@ -17,7 +17,7 @@ public sealed class WorkItemDto
     public string AreaPath { get; set; } = string.Empty;
     public string IterationPath { get; set; } = string.Empty;
     public string Url { get; set; } = string.Empty;
-    public DateTimeOffset StateChangedDate { get; set; }
+    public DateTimeOffset? StateChangedDate { get; set; }
     public List<WorkItemRelationDto> Relations { get; set; } = [];
 }
 

@@ -3,6 +3,7 @@ using DevPulse.Core.Enums;
 using DevPulse.Core.Interfaces;
 using DevPulse.Core.Models;
 using Microsoft.Data.Sqlite;
+using Serilog;
 
 namespace DevPulse.Infrastructure.Persistence;
 
@@ -34,6 +35,27 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
             cmd.CommandText = "SELECT COUNT(1) FROM events WHERE event_id = @id";
             cmd.Parameters.AddWithValue("@id", eventId);
             return Convert.ToInt64(await cmd.ExecuteScalarAsync(ct)) > 0;
+        }
+        finally { _lock.Release(); }
+    }
+
+    public async Task<HashSet<string>> GetExistingEventIdsAsync(IEnumerable<string> candidateIds, CancellationToken ct = default)
+    {
+        var ids = candidateIds.ToList();
+        if (ids.Count == 0) return [];
+        await _lock.WaitAsync(ct);
+        try
+        {
+            await using var cmd = _conn.CreateCommand();
+            var paramNames = ids.Select((_, i) => $"@p{i}").ToList();
+            cmd.CommandText = $"SELECT event_id FROM events WHERE event_id IN ({string.Join(",", paramNames)})";
+            for (int i = 0; i < ids.Count; i++)
+                cmd.Parameters.AddWithValue($"@p{i}", ids[i]);
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            var result = new HashSet<string>(StringComparer.Ordinal);
+            while (await reader.ReadAsync(ct))
+                result.Add(reader.GetString(0));
+            return result;
         }
         finally { _lock.Release(); }
     }
@@ -171,7 +193,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
         try
         {
             await using var tx = await _conn.BeginTransactionAsync(ct);
-            foreach (var i in items)
+            foreach (var workItem in items)
             {
                 await using var cmd = _conn.CreateCommand();
                 cmd.Transaction = (SqliteTransaction)tx;
@@ -190,22 +212,22 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
                         state_changed_at=excluded.state_changed_at, days_in_state=excluded.days_in_state,
                         aging_level=excluded.aging_level, discovered_at=excluded.discovered_at
                     """;
-                cmd.Parameters.AddWithValue("@id", i.Id);
-                cmd.Parameters.AddWithValue("@title", i.Title);
-                cmd.Parameters.AddWithValue("@type", (int)i.Type);
-                cmd.Parameters.AddWithValue("@state", i.State);
-                cmd.Parameters.AddWithValue("@col", i.BoardColumn);
-                cmd.Parameters.AddWithValue("@pri", i.Priority);
-                cmd.Parameters.AddWithValue("@adisplay", i.AssignedToDisplayName);
-                cmd.Parameters.AddWithValue("@acanon", i.AssignedToCanonicalKey);
-                cmd.Parameters.AddWithValue("@area", i.AreaPath);
-                cmd.Parameters.AddWithValue("@iter", i.IterationPath);
-                cmd.Parameters.AddWithValue("@url", i.WorkItemUrl);
-                cmd.Parameters.AddWithValue("@linkedpr", (object?)i.LinkedPullRequestId ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@statedt", i.StateChangedAtUtc.ToString("O"));
-                cmd.Parameters.AddWithValue("@days", i.DaysInCurrentState);
-                cmd.Parameters.AddWithValue("@aging", (int)i.AgingLevel);
-                cmd.Parameters.AddWithValue("@disc", i.DiscoveredAtUtc.ToString("O"));
+                cmd.Parameters.AddWithValue("@id", workItem.Id);
+                cmd.Parameters.AddWithValue("@title", workItem.Title);
+                cmd.Parameters.AddWithValue("@type", (int)workItem.Type);
+                cmd.Parameters.AddWithValue("@state", workItem.State);
+                cmd.Parameters.AddWithValue("@col", workItem.BoardColumn);
+                cmd.Parameters.AddWithValue("@pri", workItem.Priority);
+                cmd.Parameters.AddWithValue("@adisplay", workItem.AssignedToDisplayName);
+                cmd.Parameters.AddWithValue("@acanon", workItem.AssignedToCanonicalKey);
+                cmd.Parameters.AddWithValue("@area", workItem.AreaPath);
+                cmd.Parameters.AddWithValue("@iter", workItem.IterationPath);
+                cmd.Parameters.AddWithValue("@url", workItem.WorkItemUrl);
+                cmd.Parameters.AddWithValue("@linkedpr", (object?)workItem.LinkedPullRequestId ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@statedt", workItem.StateChangedAtUtc.ToString("O"));
+                cmd.Parameters.AddWithValue("@days", workItem.DaysInCurrentState);
+                cmd.Parameters.AddWithValue("@aging", (int)workItem.AgingLevel);
+                cmd.Parameters.AddWithValue("@disc", workItem.DiscoveredAtUtc.ToString("O"));
                 await cmd.ExecuteNonQueryAsync(ct);
             }
             await tx.CommitAsync(ct);
@@ -389,6 +411,15 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
 
     // ── Readers ───────────────────────────────────────────────────────────────
 
+    private static DateTimeOffset ParseStoredDate(SqliteDataReader r, string column)
+    {
+        var s = r.IsDBNull(r.GetOrdinal(column)) ? null : r.GetString(r.GetOrdinal(column));
+        if (DateTimeOffset.TryParseExact(s, "O", null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt))
+            return dt;
+        Log.Warning("SqliteStateStore: unparseable date in '{Column}': {Value}", column, s);
+        return DateTimeOffset.MinValue;
+    }
+
     private static DevOpsEvent ReadEvent(SqliteDataReader r) => new()
     {
         EventId = r.GetString(r.GetOrdinal("event_id")),
@@ -408,8 +439,8 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
         AuthorCanonicalKey = r.GetString(r.GetOrdinal("author_canonical_key")),
         MessageText = r.GetString(r.GetOrdinal("message_text")),
         Status = r.GetString(r.GetOrdinal("status")),
-        CreatedAtUtc = DateTimeOffset.Parse(r.GetString(r.GetOrdinal("created_at_utc"))),
-        DiscoveredAtUtc = DateTimeOffset.Parse(r.GetString(r.GetOrdinal("discovered_at_utc"))),
+        CreatedAtUtc = ParseStoredDate(r, "created_at_utc"),
+        DiscoveredAtUtc = ParseStoredDate(r, "discovered_at_utc"),
         SourceThreadId = r.GetString(r.GetOrdinal("source_thread_id")),
         SourceCommentId = r.GetString(r.GetOrdinal("source_comment_id")),
         LinkedWorkItemId = r.IsDBNull(r.GetOrdinal("linked_work_item_id")) ? null : r.GetString(r.GetOrdinal("linked_work_item_id")),
@@ -433,10 +464,10 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
         IterationPath = r.GetString(r.GetOrdinal("iteration_path")),
         WorkItemUrl = r.GetString(r.GetOrdinal("work_item_url")),
         LinkedPullRequestId = r.IsDBNull(r.GetOrdinal("linked_pr_id")) ? null : r.GetString(r.GetOrdinal("linked_pr_id")),
-        StateChangedAtUtc = DateTimeOffset.Parse(r.GetString(r.GetOrdinal("state_changed_at"))),
+        StateChangedAtUtc = ParseStoredDate(r, "state_changed_at"),
         DaysInCurrentState = r.GetInt32(r.GetOrdinal("days_in_state")),
         AgingLevel = (AgingLevel)r.GetInt32(r.GetOrdinal("aging_level")),
-        DiscoveredAtUtc = DateTimeOffset.Parse(r.GetString(r.GetOrdinal("discovered_at")))
+        DiscoveredAtUtc = ParseStoredDate(r, "discovered_at")
     };
 
     public async ValueTask DisposeAsync()

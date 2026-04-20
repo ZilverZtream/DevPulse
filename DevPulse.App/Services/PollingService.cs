@@ -7,7 +7,7 @@ using Serilog;
 
 namespace DevPulse.App.Services;
 
-public sealed class PollingService : IDisposable
+public sealed class PollingService : PollingLoopBase
 {
     private readonly IAzureDevOpsClient _adoClient;
     private readonly IStateStore _store;
@@ -18,12 +18,6 @@ public sealed class PollingService : IDisposable
     private readonly EventCollapser _collapser = new();
     private readonly MuteService _muteService = new();
     private readonly EventNormalizer _eventNorm = new();
-
-    private System.Threading.Timer? _timer;
-    private int _running; // 0=idle, 1=running (interlocked)
-    private int _apiCallCount;
-
-    public event EventHandler? PollCompleted;
 
     public PollingService(
         IAzureDevOpsClient adoClient,
@@ -39,92 +33,85 @@ public sealed class PollingService : IDisposable
         _debugLog = debugLog;
     }
 
-    public void Start(int intervalMinutes)
-    {
-        var ms = intervalMinutes * 60 * 1000;
-        _timer = new System.Threading.Timer(async _ => await RunCycleAsync(), null, 0, ms);
-    }
+    protected override string TrackName => "prs";
 
-    public async Task RefreshNowAsync() => await RunCycleAsync();
-
-    private async Task RunCycleAsync()
+    protected override async Task ExecutePollAsync(CancellationToken ct)
     {
-        if (Interlocked.CompareExchange(ref _running, 1, 0) != 0) return;
-        try
-        {
-            await ExecutePollAsync();
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "PR poll cycle failed");
-            _debugLog.UpdatePollStatus("prs", await _store.GetLastSuccessfulPollAsync("prs"), null, _apiCallCount, ex.Message);
-        }
-        finally
-        {
-            Interlocked.Exchange(ref _running, 0);
-        }
-    }
-
-    private async Task ExecutePollAsync()
-    {
-        _apiCallCount = 0;
+        var apiCallCount = 0;
         var appSettings = await _settings.GetAppSettingsAsync();
         var inboxes = await _settings.GetInboxDefinitionsAsync();
         var packs = await _settings.GetKeywordPacksAsync();
         var aliases = await _settings.GetIdentityAliasesAsync();
         var watchers = await _settings.GetWatchersAsync();
-        var activeMutes = await _store.GetActiveMutesAsync();
+        var activeMutes = await _store.GetActiveMutesAsync(ct);
 
         var idNorm = new IdentityNormalizer(aliases, appSettings.BotIdentityPatterns);
 
-        var prs = await _adoClient.GetRelevantPullRequestsAsync();
-        _apiCallCount++;
+        var prs = await _adoClient.GetRelevantPullRequestsAsync(ct);
+        apiCallCount++;
 
         var allNewEvents = new List<DevOpsEvent>();
         var pollTime = DateTimeOffset.UtcNow;
 
+        // Gather per-PR snapshot data and status/vote events
+        var prSnapshots = new List<(PullRequestDto Pr, string? PrevStatus, string? PrevVotesJson, Dictionary<string, int> CurrVotes)>();
         foreach (var pr in prs)
         {
-            // Snapshot change detection
-            var (prevStatus, prevVotesJson) = await _store.GetPrSnapshotAsync(pr.PullRequestId);
-            var currentVotesJson = JsonSerializer.Serialize(pr.Reviewers.ToDictionary(r => r.Id, r => r.Vote));
+            var (prevStatus, prevVotesJson) = await _store.GetPrSnapshotAsync(pr.PullRequestId, ct);
+            var currVotes = pr.Reviewers.ToDictionary(r => r.Id, r => r.Vote);
 
-            // Status-change events
             if (prevStatus != null && !prevStatus.Equals(pr.Status, StringComparison.OrdinalIgnoreCase))
             {
                 var meaning = _eventNorm.DeriveStatusMeaning(pr.Status);
                 if (meaning != EventMeaning.Unknown)
-                {
-                    var evt = BuildStatusEvent(pr, meaning, appSettings, idNorm, pollTime);
-                    allNewEvents.Add(evt);
-                }
+                    allNewEvents.Add(BuildStatusEvent(pr, meaning, appSettings, idNorm, pollTime));
             }
 
-            // Reviewer vote-change events
-            if (prevVotesJson != null && prevVotesJson != currentVotesJson)
+            if (prevVotesJson != null)
             {
                 var prevVotes = JsonSerializer.Deserialize<Dictionary<string, int>>(prevVotesJson) ?? [];
                 foreach (var reviewer in pr.Reviewers)
                 {
                     if (prevVotes.TryGetValue(reviewer.Id, out var prevVote) && prevVote != reviewer.Vote)
-                    {
-                        var evt = BuildVoteEvent(pr, reviewer, appSettings, idNorm, pollTime);
-                        allNewEvents.Add(evt);
-                    }
+                        allNewEvents.Add(BuildVoteEvent(pr, reviewer, appSettings, idNorm, pollTime));
                     else if (!prevVotes.ContainsKey(reviewer.Id))
-                    {
-                        var evt = BuildReviewerAddedEvent(pr, reviewer, appSettings, idNorm, pollTime);
-                        allNewEvents.Add(evt);
-                    }
+                        allNewEvents.Add(BuildReviewerAddedEvent(pr, reviewer, appSettings, idNorm, pollTime));
                 }
             }
 
-            // Save snapshot
-            await _store.SavePrSnapshotAsync(pr.PullRequestId, pr.Status, currentVotesJson);
+            prSnapshots.Add((pr, prevStatus, prevVotesJson, currVotes));
+        }
 
-            // Threads
-            var threads = await _adoClient.GetPullRequestThreadsAsync(pr.PullRequestId, pr.RepositoryId);
-            _apiCallCount++;
+        // Parallel bounded thread fetch
+        using var fetchSemaphore = new SemaphoreSlim(4, 4);
+        var threadTasks = prs.Select(async pr =>
+        {
+            await fetchSemaphore.WaitAsync(ct);
+            try { return (pr, await _adoClient.GetPullRequestThreadsAsync(pr.PullRequestId, pr.RepositoryId, ct)); }
+            finally { fetchSemaphore.Release(); }
+        }).ToArray();
+        var prWithThreads = await Task.WhenAll(threadTasks);
+        apiCallCount += prs.Count;
+
+        // Collect candidate comment event IDs for batch dedup
+        var candidateCommentIds = new List<string>();
+        foreach (var (pr, threads) in prWithThreads)
+        {
+            foreach (var thread in threads)
+                foreach (var comment in thread.Comments.Where(c => c.ParentCommentId == 0))
+                    candidateCommentIds.Add(_eventNorm.BuildCommentEventId(pr.PullRequestId, thread.Id, comment.Id));
+        }
+
+        // Batch status/vote/reviewer event IDs for dedup
+        var candidateStatusVoteIds = allNewEvents.Select(e => e.EventId).ToList();
+        var allCandidateIds = candidateCommentIds.Concat(candidateStatusVoteIds).Distinct().ToList();
+        var existingIds = await _store.GetExistingEventIdsAsync(allCandidateIds, ct);
+
+        // Build comment events (skip already-known), save snapshots
+        foreach (var (pr, threads) in prWithThreads)
+        {
+            var snapshotEntry = prSnapshots.First(s => s.Pr.PullRequestId == pr.PullRequestId);
+            await _store.SavePrSnapshotAsync(pr.PullRequestId, pr.Status, JsonSerializer.Serialize(snapshotEntry.CurrVotes), ct);
 
             var currentUserIsReviewer = pr.Reviewers.Any(r =>
                 r.UniqueName.Equals(appSettings.CurrentUserCanonicalKey, StringComparison.OrdinalIgnoreCase));
@@ -134,7 +121,7 @@ public sealed class PollingService : IDisposable
                 foreach (var comment in thread.Comments.Where(c => c.ParentCommentId == 0))
                 {
                     var eventId = _eventNorm.BuildCommentEventId(pr.PullRequestId, thread.Id, comment.Id);
-                    if (await _store.EventExistsAsync(eventId)) continue;
+                    if (existingIds.Contains(eventId)) continue;
 
                     var authorCanon = idNorm.Normalize(comment.Author);
                     var source = idNorm.ClassifySource(comment.Author);
@@ -166,31 +153,20 @@ public sealed class PollingService : IDisposable
             }
         }
 
-        // Filter already-known (second-pass dedup for status/vote events)
-        var newEvents = new List<DevOpsEvent>();
-        foreach (var evt in allNewEvents)
-        {
-            if (!await _store.EventExistsAsync(evt.EventId))
-                newEvents.Add(evt);
-        }
+        // Filter already-known status/vote events using the batch result
+        var newEvents = allNewEvents.Where(evt => !existingIds.Contains(evt.EventId)).ToList();
 
-        // Apply mutes
         var unmuted = _muteService.Filter(newEvents, activeMutes, pollTime);
-
-        // Collapse
         var collapsed = _collapser.Collapse(unmuted, pollTime);
 
-        // Assign inboxes
         foreach (var evt in collapsed)
         {
             evt.InboxName = _ruleEngine.AssignInbox(evt, watchers, inboxes, packs, appSettings);
             _debugLog.RecordEvent(evt);
         }
 
-        // Persist
-        await _store.SaveEventsAsync(collapsed);
+        await _store.SaveEventsAsync(collapsed, ct);
 
-        // Notifications
         foreach (var evt in collapsed)
         {
             var inbox = inboxes.FirstOrDefault(i => i.Name == evt.InboxName);
@@ -199,10 +175,13 @@ public sealed class PollingService : IDisposable
         }
 
         var now = DateTimeOffset.UtcNow;
-        await _store.SetLastSuccessfulPollAsync("prs", now);
-        _debugLog.UpdatePollStatus("prs", now, now.AddMinutes(appSettings.PrPollingIntervalMinutes), _apiCallCount);
+        await _store.SetLastSuccessfulPollAsync("prs", now, ct);
+        _debugLog.UpdatePollStatus("prs", now, now.AddMinutes(appSettings.PrPollingIntervalMinutes), apiCallCount);
+    }
 
-        PollCompleted?.Invoke(this, EventArgs.Empty);
+    protected override async Task OnPollFailedAsync(Exception ex, CancellationToken ct)
+    {
+        _debugLog.UpdatePollStatus("prs", await _store.GetLastSuccessfulPollAsync("prs", ct), null, 0, ex.Message);
     }
 
     private DevOpsEvent BuildStatusEvent(PullRequestDto pr, EventMeaning meaning, AppSettings settings, IdentityNormalizer idNorm, DateTimeOffset pollTime)
@@ -278,6 +257,4 @@ public sealed class PollingService : IDisposable
             IsCurrentUserReviewer = reviewer.UniqueName.Equals(settings.CurrentUserCanonicalKey, StringComparison.OrdinalIgnoreCase)
         };
     }
-
-    public void Dispose() => _timer?.Dispose();
 }

@@ -6,6 +6,7 @@ using DevPulse.Core.Services;
 using DevPulse.Infrastructure.Notifications;
 using DevPulse.Infrastructure.Persistence;
 using DevPulse.Infrastructure.Security;
+using Serilog;
 
 namespace DevPulse.App;
 
@@ -16,6 +17,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly DebugLogService _debugLog;
     private readonly InboxViewService _inboxView;
     private readonly BoardViewService _boardView;
+    private readonly WindowsFormsSynchronizationContext _uiSync = new();
 
     private PollingService? _prPoller;
     private WorkItemPollingService? _wiPoller;
@@ -33,7 +35,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _inboxView = new InboxViewService(store);
         _boardView = new BoardViewService();
 
-        _ = InitializeAsync();
+        RunBackground(InitializeAsync, "initialize");
     }
 
     private async Task InitializeAsync()
@@ -41,15 +43,15 @@ public sealed class TrayApplicationContext : ApplicationContext
         await _settings.SeedDefaultsIfNeededAsync();
 
         var appSettings = await _settings.GetAppSettingsAsync();
-        var pat = SecretStore.LoadPat();
+        var patResult = SecretStore.TryLoadPat();
 
-        if (!IsConfigured(appSettings, pat))
+        if (!IsConfigured(appSettings, patResult))
         {
             ShowSettings();
             return;
         }
 
-        var httpClient = CreateHttpClient(pat!);
+        var httpClient = CreateHttpClient(patResult.Value!);
         var notifications = new WindowsToastNotificationService();
 
         var adoClient = new DevPulse.Infrastructure.AzureDevOps.AzureDevOpsClient(
@@ -60,12 +62,12 @@ public sealed class TrayApplicationContext : ApplicationContext
         _prPoller = new PollingService(adoClient, _store, notifications, _settings, _debugLog);
         _wiPoller = new WorkItemPollingService(wiClient, _store, _settings, _debugLog);
 
-        _prPoller.PollCompleted += async (_, _) => await RefreshTrayAsync();
-        _wiPoller.PollCompleted += async (_, _) =>
+        _prPoller.PollCompleted += (_, _) => _uiSync.Post(_ => RunBackground(RefreshTrayAsync, "refresh-tray"), null);
+        _wiPoller.PollCompleted += (_, _) => _uiSync.Post(_ =>
         {
-            if (_boardForm?.Visible == true) await _boardForm.LoadAsync();
+            if (_boardForm?.Visible == true) RunBackground(() => _boardForm.LoadAsync(), "board-load");
             if (_wiPoller.LastPollFailed && _boardForm != null) _boardForm.ShowStaleBanner = true;
-        };
+        }, null);
 
         BuildTrayIcon();
         await RefreshTrayAsync();
@@ -75,8 +77,8 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         if (appSettings.RefreshOnStartup)
         {
-            _ = _prPoller.RefreshNowAsync();
-            _ = _wiPoller.RefreshNowAsync();
+            RunBackground(_prPoller.RefreshNowAsync, "initial-pr-refresh");
+            RunBackground(_wiPoller.RefreshNowAsync, "initial-wi-refresh");
         }
     }
 
@@ -89,16 +91,15 @@ public sealed class TrayApplicationContext : ApplicationContext
             Visible = true
         };
         _trayIcon.DoubleClick += (_, _) => ShowBoard();
-        _ = RebuildMenuAsync();
+        RunBackground(RebuildMenuAsync, "rebuild-menu");
     }
 
     private async Task RefreshTrayAsync()
     {
         await RebuildMenuAsync();
         var nma = await _store.GetUnreadCountForInboxAsync("Needs My Attention");
-        _trayIcon.Text = nma > 0
-            ? $"DevPulse — Needs My Attention: {nma}"
-            : "DevPulse — No attention needed";
+        var text = nma > 0 ? $"DevPulse — Needs My Attention: {nma}" : "DevPulse — No attention needed";
+        _trayIcon.Text = text.Length > 63 ? text[..63] : text;
     }
 
     private async Task RebuildMenuAsync()
@@ -113,8 +114,8 @@ public sealed class TrayApplicationContext : ApplicationContext
         var builder = new TrayMenuBuilder();
         var menu = builder.Build(
             inboxes, counts,
-            refreshPrs: () => _ = _prPoller?.RefreshNowAsync(),
-            refreshBoard: () => _ = _wiPoller?.RefreshNowAsync(),
+            refreshPrs: () => RunBackground(() => _prPoller?.RefreshNowAsync() ?? Task.CompletedTask, "refresh-prs"),
+            refreshBoard: () => RunBackground(() => _wiPoller?.RefreshNowAsync() ?? Task.CompletedTask, "refresh-board"),
             openInbox: name => ShowInbox(name),
             openBoard: ShowBoard,
             openMuted: ShowMuted,
@@ -129,6 +130,10 @@ public sealed class TrayApplicationContext : ApplicationContext
             _trayIcon.ContextMenuStrip = menu;
         }
     }
+
+    private void RunBackground(Func<Task> op, string name)
+        => op().ContinueWith(t => Log.Error(t.Exception?.GetBaseException(), "Background op '{Op}' failed", name),
+            CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
 
     private void ShowInbox(string name)
     {
@@ -145,7 +150,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
         _boardForm.Show();
         _boardForm.BringToFront();
-        _ = _boardForm.LoadAsync();
+        RunBackground(() => _boardForm.LoadAsync(), "board-load");
     }
 
     private void ShowDebug()
@@ -175,17 +180,21 @@ public sealed class TrayApplicationContext : ApplicationContext
         MessageBox.Show("Muted PRs view — coming in next iteration.", "DevPulse", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
-    private static bool IsConfigured(DevPulse.Core.Models.AppSettings s, string? pat)
-        => !string.IsNullOrEmpty(s.OrganizationUrl) && !string.IsNullOrEmpty(s.Project) && pat != null;
+    private static bool IsConfigured(DevPulse.Core.Models.AppSettings s, PatLoadResult patResult)
+        => !string.IsNullOrEmpty(s.OrganizationUrl) && !string.IsNullOrEmpty(s.Project) && patResult.IsOk;
 
     private static System.Net.Http.HttpClient CreateHttpClient(string pat)
     {
         var client = new System.Net.Http.HttpClient();
+        client.Timeout = TimeSpan.FromSeconds(30);
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Basic",
                 Convert.ToBase64String(System.Text.Encoding.ASCII.GetBytes($":{pat}")));
         return client;
     }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    private static extern bool DestroyIcon(IntPtr hIcon);
 
     private static Icon CreateIcon()
     {
@@ -199,7 +208,11 @@ public sealed class TrayApplicationContext : ApplicationContext
         using var font = new Font("Segoe UI", 7f, FontStyle.Bold);
         using var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
         g.DrawString("D", font, textBr, new RectangleF(0, 0, 16, 16), sf);
-        return Icon.FromHandle(bmp.GetHicon());
+        var hIcon = bmp.GetHicon();
+        using var tmp = Icon.FromHandle(hIcon);
+        var icon = (Icon)tmp.Clone();
+        DestroyIcon(hIcon);
+        return icon;
     }
 
     protected override void Dispose(bool disposing)

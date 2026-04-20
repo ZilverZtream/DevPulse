@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DevPulse.Core.Interfaces;
+using Serilog;
 
 namespace DevPulse.Infrastructure.AzureDevOps;
 
@@ -34,17 +35,18 @@ public sealed class WorkItemClient : IWorkItemClient
         return await FetchBatchAsync(ids, ct);
     }
 
+    private static string WiqlLiteral(string value) => value.Replace("'", "''");
+
     private async Task<List<int>> GetIdsViaWiqlAsync(string areaPath, string? iterationPath, CancellationToken ct)
     {
-        var wiql = $"SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '{_project}' " +
-                   $"AND [System.AreaPath] UNDER '{areaPath}' " +
-                   (string.IsNullOrEmpty(iterationPath) ? "" : $"AND [System.IterationPath] UNDER '{iterationPath}' ") +
+        var wiql = $"SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '{WiqlLiteral(_project)}' " +
+                   $"AND [System.AreaPath] UNDER '{WiqlLiteral(areaPath)}' " +
+                   (string.IsNullOrEmpty(iterationPath) ? "" : $"AND [System.IterationPath] UNDER '{WiqlLiteral(iterationPath)}' ") +
                    "AND [System.State] <> 'Removed' ORDER BY [System.ChangedDate] DESC";
 
         var url = $"{_orgUrl}/{Uri.EscapeDataString(_project)}/_apis/wit/wiql?api-version={ApiVersions.WorkItemQueryLanguage}";
         var content = new StringContent(JsonSerializer.Serialize(new { query = wiql }), Encoding.UTF8, "application/json");
-        var response = await _http.PostAsync(url, content, ct);
-        response.EnsureSuccessStatusCode();
+        var response = await PostWithRetryAsync(_http, url, content, ct);
 
         var body = await response.Content.ReadAsStringAsync(ct);
         var result = JsonSerializer.Deserialize<WiqlResult>(body, JsonOpts);
@@ -58,8 +60,7 @@ public sealed class WorkItemClient : IWorkItemClient
         {
             var idList = string.Join(",", chunk);
             var url = $"{_orgUrl}/_apis/wit/workitems?ids={idList}&fields={Fields}&$expand=relations&api-version={ApiVersions.WorkItemsBatch}";
-            var response = await _http.GetAsync(url, ct);
-            response.EnsureSuccessStatusCode();
+            var response = await GetWithRetryAsync(_http, url, ct);
 
             var body = await response.Content.ReadAsStringAsync(ct);
             var result = JsonSerializer.Deserialize<AdoListResponse<AdoWorkItem>>(body, JsonOpts);
@@ -107,8 +108,48 @@ public sealed class WorkItemClient : IWorkItemClient
         return string.Empty;
     }
 
-    private static DateTimeOffset ParseDate(object? val)
-        => val is JsonElement je && DateTimeOffset.TryParse(je.GetString(), out var dt) ? dt : DateTimeOffset.UtcNow;
+    private static DateTimeOffset? ParseDate(object? val)
+    {
+        if (val is JsonElement je)
+        {
+            var s = je.GetString();
+            if (DateTimeOffset.TryParse(s, out var dt)) return dt;
+            Log.Warning("WorkItemClient: unparseable StateChangeDate value: {Value}", s);
+        }
+        return null;
+    }
+
+    private static async Task<HttpResponseMessage> GetWithRetryAsync(HttpClient http, string url, CancellationToken ct)
+    {
+        var delay = TimeSpan.FromSeconds(2);
+        HttpResponseMessage? last = null;
+        for (int attempt = 1; attempt <= 3; attempt++)
+        {
+            last = await http.GetAsync(url, ct);
+            if (last.IsSuccessStatusCode || (int)last.StatusCode < 500 || attempt == 3) break;
+            await Task.Delay(delay + TimeSpan.FromMilliseconds(Random.Shared.Next(0, 500)), ct);
+            delay *= 2;
+        }
+        if (!last!.IsSuccessStatusCode)
+            throw new HttpRequestException($"ADO GET failed [{(int)last.StatusCode}]: {url}");
+        return last;
+    }
+
+    private static async Task<HttpResponseMessage> PostWithRetryAsync(HttpClient http, string url, HttpContent content, CancellationToken ct)
+    {
+        var delay = TimeSpan.FromSeconds(2);
+        HttpResponseMessage? last = null;
+        for (int attempt = 1; attempt <= 3; attempt++)
+        {
+            last = await http.PostAsync(url, content, ct);
+            if (last.IsSuccessStatusCode || (int)last.StatusCode < 500 || attempt == 3) break;
+            await Task.Delay(delay + TimeSpan.FromMilliseconds(Random.Shared.Next(0, 500)), ct);
+            delay *= 2;
+        }
+        if (!last!.IsSuccessStatusCode)
+            throw new HttpRequestException($"ADO POST failed [{(int)last.StatusCode}]: {url}");
+        return last;
+    }
 
     private sealed class AdoListResponse<T> { public List<T>? Value { get; set; } }
     private sealed class WiqlResult { public List<WiqlItem>? WorkItems { get; set; } }

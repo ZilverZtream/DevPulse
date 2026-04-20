@@ -1,22 +1,15 @@
 using DevPulse.Core.Interfaces;
 using DevPulse.Core.Services;
-using Serilog;
 
 namespace DevPulse.App.Services;
 
-public sealed class WorkItemPollingService : IDisposable
+public sealed class WorkItemPollingService : PollingLoopBase
 {
     private readonly IWorkItemClient _client;
     private readonly IStateStore _store;
     private readonly SettingsService _settings;
     private readonly WorkItemNormalizer _normalizer = new();
     private readonly DebugLogService _debugLog;
-
-    private System.Threading.Timer? _timer;
-    private int _running;
-
-    public event EventHandler? PollCompleted;
-    public bool LastPollFailed { get; private set; }
 
     public WorkItemPollingService(
         IWorkItemClient client,
@@ -30,49 +23,24 @@ public sealed class WorkItemPollingService : IDisposable
         _debugLog = debugLog;
     }
 
-    public void Start(int intervalMinutes)
-    {
-        var ms = intervalMinutes * 60 * 1000;
-        _timer = new System.Threading.Timer(async _ => await RunCycleAsync(), null, 0, ms);
-    }
+    protected override string TrackName => "workitems";
 
-    public async Task RefreshNowAsync() => await RunCycleAsync();
-
-    private async Task RunCycleAsync()
-    {
-        if (Interlocked.CompareExchange(ref _running, 1, 0) != 0) return;
-        try
-        {
-            await ExecutePollAsync();
-            LastPollFailed = false;
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Work item poll cycle failed");
-            LastPollFailed = true;
-            _debugLog.UpdatePollStatus("workitems", await _store.GetLastSuccessfulPollAsync("workitems"), null, 0, ex.Message);
-        }
-        finally
-        {
-            Interlocked.Exchange(ref _running, 0);
-        }
-    }
-
-    private async Task ExecutePollAsync()
+    protected override async Task ExecutePollAsync(CancellationToken ct)
     {
         var appSettings = await _settings.GetAppSettingsAsync();
         var columns = await _settings.GetBoardColumnsAsync();
         var now = DateTimeOffset.UtcNow;
 
-        var dtos = await _client.GetWorkItemsAsync(appSettings.AreaPath, appSettings.IterationPath);
+        var dtos = await _client.GetWorkItemsAsync(appSettings.AreaPath, appSettings.IterationPath, ct);
         var items = dtos.Select(d => _normalizer.Normalize(d, columns, now)).ToList();
 
-        await _store.UpsertWorkItemsAsync(items);
-        await _store.SetLastSuccessfulPollAsync("workitems", now);
+        await _store.UpsertWorkItemsAsync(items, ct);
+        await _store.SetLastSuccessfulPollAsync("workitems", now, ct);
         _debugLog.UpdatePollStatus("workitems", now, now.AddMinutes(appSettings.WorkItemPollingIntervalMinutes), 1);
-
-        PollCompleted?.Invoke(this, EventArgs.Empty);
     }
 
-    public void Dispose() => _timer?.Dispose();
+    protected override async Task OnPollFailedAsync(Exception ex, CancellationToken ct)
+    {
+        _debugLog.UpdatePollStatus("workitems", await _store.GetLastSuccessfulPollAsync("workitems", ct), null, 0, ex.Message);
+    }
 }

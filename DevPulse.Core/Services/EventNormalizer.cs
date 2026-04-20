@@ -6,9 +6,6 @@ namespace DevPulse.Core.Services;
 
 public sealed class EventNormalizer
 {
-    private static readonly int[] BlockedVotes = [-10];
-    private static readonly int[] WaitingVotes = [-5];
-
     public EventMeaning DeriveCommentMeaning(string messageText, string currentUserCanonicalKey, string authorCanonicalKey)
     {
         if (!string.IsNullOrEmpty(currentUserCanonicalKey) &&

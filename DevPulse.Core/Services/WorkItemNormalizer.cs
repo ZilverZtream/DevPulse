@@ -2,6 +2,7 @@ using DevPulse.Core.Enums;
 using DevPulse.Core.Interfaces;
 using DevPulse.Core.Models;
 using System.Text.RegularExpressions;
+using Serilog;
 
 namespace DevPulse.Core.Services;
 
@@ -20,7 +21,18 @@ public sealed partial class WorkItemNormalizer
 
     public WorkItem Normalize(WorkItemDto dto, IReadOnlyList<BoardColumnDefinition> columns, DateTimeOffset now)
     {
-        var days = (int)(now - dto.StateChangedDate).TotalDays;
+        DateTimeOffset stateChangedAt;
+        if (dto.StateChangedDate.HasValue)
+        {
+            stateChangedAt = dto.StateChangedDate.Value;
+        }
+        else
+        {
+            Log.Warning("WorkItemNormalizer: missing StateChangedDate for work item {Id}, using UtcNow", dto.Id);
+            stateChangedAt = DateTimeOffset.UtcNow;
+        }
+
+        var days = (int)(now - stateChangedAt).TotalDays;
         var column = ResolveColumn(dto.State, columns);
         var aging = column != null ? ComputeAging(days, column) : AgingLevel.Fresh;
 
@@ -40,7 +52,7 @@ public sealed partial class WorkItemNormalizer
             IterationPath = dto.IterationPath,
             WorkItemUrl = dto.Url,
             LinkedPullRequestId = ExtractLinkedPrId(dto.Relations),
-            StateChangedAtUtc = dto.StateChangedDate,
+            StateChangedAtUtc = stateChangedAt,
             DaysInCurrentState = days,
             AgingLevel = aging,
             DiscoveredAtUtc = now

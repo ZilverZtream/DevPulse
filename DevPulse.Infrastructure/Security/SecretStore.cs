@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using Serilog;
 
 namespace DevPulse.Infrastructure.Security;
 
@@ -20,25 +21,29 @@ public static class SecretStore
         File.WriteAllBytes(path, encrypted);
     }
 
-    public static string? LoadPat()
+    public static PatLoadResult TryLoadPat()
     {
         var path = GetStoragePath();
-        if (!File.Exists(path)) return null;
-
+        if (!File.Exists(path)) return PatLoadResult.Missing;
         try
         {
             var encrypted = File.ReadAllBytes(path);
-            var decrypted = ProtectedData.Unprotect(
-                encrypted,
-                Encoding.UTF8.GetBytes(Prefix),
-                DataProtectionScope.CurrentUser);
-            return Encoding.UTF8.GetString(decrypted);
+            var decrypted = ProtectedData.Unprotect(encrypted, Encoding.UTF8.GetBytes(Prefix), DataProtectionScope.CurrentUser);
+            return PatLoadResult.Ok(Encoding.UTF8.GetString(decrypted));
         }
-        catch
+        catch (System.Security.Cryptography.CryptographicException ex)
         {
-            return null;
+            Log.Warning(ex, "SecretStore: PAT decryption failed — key rotation or file corruption");
+            return PatLoadResult.Unreadable;
+        }
+        catch (IOException ex)
+        {
+            Log.Warning(ex, "SecretStore: PAT file read failed");
+            return PatLoadResult.Unreadable;
         }
     }
+
+    public static string? LoadPat() => TryLoadPat().Value;
 
     public static void ClearPat()
     {
