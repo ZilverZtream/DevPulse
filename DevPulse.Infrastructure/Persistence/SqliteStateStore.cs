@@ -418,13 +418,14 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
 
     // ── Readers ───────────────────────────────────────────────────────────────
 
-    private static DateTimeOffset ParseStoredDate(SqliteDataReader r, string column)
+    private static DateTimeOffset? ParseStoredDate(SqliteDataReader r, string column)
     {
         var s = r.IsDBNull(r.GetOrdinal(column)) ? null : r.GetString(r.GetOrdinal(column));
+        if (s == null) return null;
         if (DateTimeOffset.TryParseExact(s, "O", null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt))
             return dt;
         Log.Warning("SqliteStateStore: unparseable date in '{Column}': {Value}", column, s);
-        return DateTimeOffset.MinValue;
+        return null;
     }
 
     private static DevOpsEvent ReadEvent(SqliteDataReader r) => new()
@@ -445,8 +446,8 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
         AuthorCanonicalKey = r.GetString(r.GetOrdinal("author_canonical_key")),
         MessageText = r.GetString(r.GetOrdinal("message_text")),
         Status = r.GetString(r.GetOrdinal("status")),
-        CreatedAtUtc = ParseStoredDate(r, "created_at_utc"),
-        DiscoveredAtUtc = ParseStoredDate(r, "discovered_at_utc"),
+        CreatedAtUtc = ParseStoredDate(r, "created_at_utc") ?? DateTimeOffset.MinValue,
+        DiscoveredAtUtc = ParseStoredDate(r, "discovered_at_utc") ?? DateTimeOffset.MinValue,
         SourceThreadId = r.GetString(r.GetOrdinal("source_thread_id")),
         SourceCommentId = r.GetString(r.GetOrdinal("source_comment_id")),
         LinkedWorkItemId = r.IsDBNull(r.GetOrdinal("linked_work_item_id")) ? null : r.GetString(r.GetOrdinal("linked_work_item_id")),
@@ -470,10 +471,10 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
         IterationPath = r.GetString(r.GetOrdinal("iteration_path")),
         WorkItemUrl = r.GetString(r.GetOrdinal("work_item_url")),
         LinkedPullRequestId = r.IsDBNull(r.GetOrdinal("linked_pr_id")) ? null : r.GetString(r.GetOrdinal("linked_pr_id")),
-        StateChangedAtUtc = ParseStoredDate(r, "state_changed_at"),
+        StateChangedAtUtc = ParseStoredDate(r, "state_changed_at") ?? DateTimeOffset.MinValue,
         DaysInCurrentState = r.GetInt32(r.GetOrdinal("days_in_state")),
         AgingLevel = (AgingLevel)r.GetInt32(r.GetOrdinal("aging_level")),
-        DiscoveredAtUtc = ParseStoredDate(r, "discovered_at")
+        DiscoveredAtUtc = ParseStoredDate(r, "discovered_at") ?? DateTimeOffset.MinValue
     };
 
     public async ValueTask DisposeAsync()

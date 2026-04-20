@@ -2,6 +2,7 @@ using DevPulse.Core.Interfaces;
 using DevPulse.Core.Models;
 using DevPulse.Core.Enums;
 using Microsoft.Toolkit.Uwp.Notifications;
+using Serilog;
 
 namespace DevPulse.Infrastructure.Notifications;
 
@@ -16,9 +17,13 @@ public sealed class WindowsToastNotificationService : INotificationService
                 .AddText(BuildBody(evt))
                 .Show();
         }
-        catch
+        catch (InvalidOperationException ex)
         {
-            // Toast failures are non-fatal — log elsewhere if needed
+            Log.Warning(ex, "Toast notification failed (notification platform unavailable)");
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Toast notification failed unexpectedly for PR #{PrId}", evt.PullRequestId);
         }
         return Task.CompletedTask;
     }
