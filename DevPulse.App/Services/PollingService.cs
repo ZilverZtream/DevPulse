@@ -75,6 +75,7 @@ public sealed class PollingService : PollingLoopBase
                 var prevVotes = JsonSerializer.Deserialize<Dictionary<string, int>>(prevVotesJson) ?? [];
                 foreach (var reviewer in pr.Reviewers)
                 {
+                    if (string.IsNullOrEmpty(reviewer.Id)) continue;
                     if (prevVotes.TryGetValue(reviewer.Id, out var prevVote) && prevVote != reviewer.Vote)
                         allNewEvents.Add(BuildVoteEvent(pr, reviewer, appSettings, idNorm, pollTime));
                     else if (!prevVotes.ContainsKey(reviewer.Id))
@@ -142,7 +143,7 @@ public sealed class PollingService : PollingLoopBase
                         Organization = pr.Organization,
                         Project = pr.Project,
                         Repository = pr.RepositoryName,
-                        AuthorDisplayName = comment.Author.DisplayName,
+                        AuthorDisplayName = comment.Author?.DisplayName ?? string.Empty,
                         AuthorCanonicalKey = authorCanon,
                         MessageText = comment.Content,
                         Status = pr.Status,
