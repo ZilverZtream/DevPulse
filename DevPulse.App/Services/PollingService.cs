@@ -193,7 +193,7 @@ public sealed class PollingService : PollingLoopBase
 
     protected override async Task OnPollFailedAsync(Exception ex, CancellationToken ct)
     {
-        _debugLog.UpdatePollStatus("prs", await _store.GetLastSuccessfulPollAsync("prs", ct), null, 0, ex.Message);
+        _debugLog.UpdatePollStatus("prs", await _store.GetLastSuccessfulPollAsync("prs", ct), null, 0, PollErrorClassifier.Classify(ex));
     }
 
     private DevOpsEvent BuildStatusEvent(PullRequestDto pr, EventMeaning meaning, AppSettings settings, IdentityNormalizer idNorm, DateTimeOffset pollTime)
