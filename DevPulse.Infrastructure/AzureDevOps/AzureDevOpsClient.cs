@@ -29,17 +29,30 @@ public sealed class AzureDevOpsClient : IAzureDevOpsClient
 
     public async Task<IReadOnlyList<PullRequestDto>> GetRelevantPullRequestsAsync(CancellationToken ct = default)
     {
-        var url = $"{_orgUrl}/{Uri.EscapeDataString(_project)}/_apis/git/pullrequests" +
-                  $"?searchCriteria.status=all&$top=200&api-version={ApiVersions.PullRequests}";
+        const int pageSize = 200;
+        const int maxPages = 5;
+        var allPrs = new List<PullRequestDto>();
 
-        if (!string.IsNullOrWhiteSpace(_repoFilter))
-            url += $"&searchCriteria.repositoryId={Uri.EscapeDataString(_repoFilter)}";
+        for (int page = 0; page < maxPages; page++)
+        {
+            var skip = page * pageSize;
+            var url = $"{_orgUrl}/{Uri.EscapeDataString(_project)}/_apis/git/pullrequests" +
+                      $"?searchCriteria.status=all&$top={pageSize}&$skip={skip}&api-version={ApiVersions.PullRequests}";
 
-        var response = await GetWithRetryAsync(_http, url, ct);
+            if (!string.IsNullOrWhiteSpace(_repoFilter))
+                url += $"&searchCriteria.repositoryId={Uri.EscapeDataString(_repoFilter)}";
 
-        var body = await response.Content.ReadAsStringAsync(ct);
-        var result = JsonSerializer.Deserialize<AdoListResponse<AdoPullRequest>>(body, JsonOpts);
-        return result?.Value?.Select(Map).ToList() ?? [];
+            var response = await AdoRetryHelper.GetWithRetryAsync(_http, url, ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+            var result = JsonSerializer.Deserialize<AdoListResponse<AdoPullRequest>>(body, JsonOpts);
+            var pageItems = result?.Value;
+            if (pageItems == null || pageItems.Count == 0) break;
+
+            allPrs.AddRange(pageItems.Select(Map));
+            if (pageItems.Count < pageSize) break;
+        }
+
+        return allPrs;
     }
 
     public async Task<IReadOnlyList<PullRequestThreadDto>> GetPullRequestThreadsAsync(int prId, string repoId, CancellationToken ct = default)
@@ -47,7 +60,7 @@ public sealed class AzureDevOpsClient : IAzureDevOpsClient
         var url = $"{_orgUrl}/{Uri.EscapeDataString(_project)}/_apis/git/repositories/{Uri.EscapeDataString(repoId)}" +
                   $"/pullrequests/{prId}/threads?api-version={ApiVersions.PullRequestThreads}";
 
-        var response = await GetWithRetryAsync(_http, url, ct);
+        var response = await AdoRetryHelper.GetWithRetryAsync(_http, url, ct);
 
         var body = await response.Content.ReadAsStringAsync(ct);
         var result = JsonSerializer.Deserialize<AdoListResponse<AdoThread>>(body, JsonOpts);
@@ -104,50 +117,6 @@ public sealed class AzureDevOpsClient : IAzureDevOpsClient
         Id = r.Id ?? string.Empty,
         Vote = r.Vote
     };
-
-    private static async Task<HttpResponseMessage> GetWithRetryAsync(HttpClient http, string url, CancellationToken ct)
-    {
-        var delay = TimeSpan.FromSeconds(2);
-        HttpResponseMessage? last = null;
-        for (int attempt = 1; attempt <= 3; attempt++)
-        {
-            last = await http.GetAsync(url, ct);
-
-            if (last.IsSuccessStatusCode) return last;
-
-            var code = (int)last.StatusCode;
-            if (code == 401) throw new HttpRequestException($"ADO GET unauthorized (401) — check PAT: {url}", null, last.StatusCode);
-            if (code == 403) throw new HttpRequestException($"ADO GET forbidden (403) — missing permission: {url}", null, last.StatusCode);
-            if (code == 429) throw new HttpRequestException($"ADO GET rate-limited (429): {url}", null, last.StatusCode);
-            if (code < 500 || attempt == 3) break;
-
-            await Task.Delay(delay + TimeSpan.FromMilliseconds(Random.Shared.Next(0, 500)), ct);
-            delay *= 2;
-        }
-        throw new HttpRequestException($"ADO GET failed [{(int)last!.StatusCode}]: {url}", null, last.StatusCode);
-    }
-
-    private static async Task<HttpResponseMessage> PostWithRetryAsync(HttpClient http, string url, HttpContent content, CancellationToken ct)
-    {
-        var delay = TimeSpan.FromSeconds(2);
-        HttpResponseMessage? last = null;
-        for (int attempt = 1; attempt <= 3; attempt++)
-        {
-            last = await http.PostAsync(url, content, ct);
-
-            if (last.IsSuccessStatusCode) return last;
-
-            var code = (int)last.StatusCode;
-            if (code == 401) throw new HttpRequestException($"ADO POST unauthorized (401) — check PAT: {url}", null, last.StatusCode);
-            if (code == 403) throw new HttpRequestException($"ADO POST forbidden (403) — missing permission: {url}", null, last.StatusCode);
-            if (code == 429) throw new HttpRequestException($"ADO POST rate-limited (429): {url}", null, last.StatusCode);
-            if (code < 500 || attempt == 3) break;
-
-            await Task.Delay(delay + TimeSpan.FromMilliseconds(Random.Shared.Next(0, 500)), ct);
-            delay *= 2;
-        }
-        throw new HttpRequestException($"ADO POST failed [{(int)last!.StatusCode}]: {url}", null, last.StatusCode);
-    }
 
     // ADO JSON DTOs
     private sealed class AdoListResponse<T> { public List<T>? Value { get; set; } }

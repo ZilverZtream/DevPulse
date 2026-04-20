@@ -2,6 +2,7 @@ using DevPulse.App.Forms;
 using DevPulse.App.Services;
 using DevPulse.App.UI;
 using DevPulse.Core.Interfaces;
+using DevPulse.Core.Models;
 using DevPulse.Core.Services;
 using DevPulse.Infrastructure.AzureDevOps;
 using DevPulse.Infrastructure.Notifications;
@@ -22,6 +23,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     private PollingService? _prPoller;
     private WorkItemPollingService? _wiPoller;
+    private Dictionary<string, int> _lastMenuCounts = [];
 
     private NotifyIcon _trayIcon = null!;
     private BoardForm? _boardForm;
@@ -92,26 +94,35 @@ public sealed class TrayApplicationContext : ApplicationContext
             Visible = true
         };
         _trayIcon.DoubleClick += (_, _) => ShowBoard();
-        RunBackground(RebuildMenuAsync, "rebuild-menu");
     }
 
     private async Task RefreshTrayAsync()
     {
-        await RebuildMenuAsync();
-        var nma = await _store.GetUnreadCountForInboxAsync("Needs My Attention");
-        var text = nma > 0 ? $"DevPulse — Needs My Attention: {nma}" : "DevPulse — No attention needed";
-        _trayIcon.Text = text.Length > 63 ? text[..63] : text;
-    }
-
-    private async Task RebuildMenuAsync()
-    {
         var inboxes = await _settings.GetInboxDefinitionsAsync();
         var appSettings = await _settings.GetAppSettingsAsync();
         var counts = new Dictionary<string, int>();
-
         foreach (var inbox in inboxes)
             counts[inbox.Name] = await _store.GetUnreadCountForInboxAsync(inbox.Name);
 
+        bool changed = counts.Count != _lastMenuCounts.Count ||
+                       counts.Any(kv => !_lastMenuCounts.TryGetValue(kv.Key, out var prev) || prev != kv.Value);
+        if (changed)
+        {
+            _lastMenuCounts = counts;
+            RebuildMenu(inboxes, counts, appSettings);
+        }
+
+        var nma = counts.GetValueOrDefault("Needs My Attention");
+        var text = nma > 0 ? $"DevPulse — Needs My Attention: {nma}" : "DevPulse — No attention needed";
+        if (_trayIcon != null)
+            _trayIcon.Text = text.Length > 63 ? text[..63] : text;
+    }
+
+    private void RebuildMenu(
+        IReadOnlyList<InboxDefinition> inboxes,
+        Dictionary<string, int> counts,
+        AppSettings appSettings)
+    {
         var builder = new TrayMenuBuilder();
         var menu = builder.Build(
             inboxes, counts,
@@ -181,7 +192,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         MessageBox.Show("Muted PRs view — coming in next iteration.", "DevPulse", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
-    private static bool IsConfigured(DevPulse.Core.Models.AppSettings s, PatLoadResult patResult)
+    private static bool IsConfigured(AppSettings s, PatLoadResult patResult)
         => !string.IsNullOrEmpty(s.OrganizationUrl) && !string.IsNullOrEmpty(s.Project) && patResult.IsOk;
 
     private static System.Net.Http.HttpClient CreateHttpClient(string orgUrl, string pat)
