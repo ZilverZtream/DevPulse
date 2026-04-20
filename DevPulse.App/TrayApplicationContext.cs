@@ -14,10 +14,11 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly SqliteStateStore _store;
     private readonly SettingsService _settings;
     private readonly DebugLogService _debugLog;
-    private readonly PollingService _prPoller;
-    private readonly WorkItemPollingService _wiPoller;
     private readonly InboxViewService _inboxView;
     private readonly BoardViewService _boardView;
+
+    private PollingService? _prPoller;
+    private WorkItemPollingService? _wiPoller;
 
     private NotifyIcon _trayIcon = null!;
     private BoardForm? _boardForm;
@@ -32,17 +33,32 @@ public sealed class TrayApplicationContext : ApplicationContext
         _inboxView = new InboxViewService(store);
         _boardView = new BoardViewService();
 
+        _ = InitializeAsync();
+    }
+
+    private async Task InitializeAsync()
+    {
+        await _settings.SeedDefaultsIfNeededAsync();
+
+        var appSettings = await _settings.GetAppSettingsAsync();
+        var pat = SecretStore.LoadPat();
+
+        if (!IsConfigured(appSettings, pat))
+        {
+            ShowSettings();
+            return;
+        }
+
+        var httpClient = CreateHttpClient(pat!);
         var notifications = new WindowsToastNotificationService();
-        var httpClient = CreateHttpClient();
-        var appSettings = _settings.GetAppSettingsAsync().GetAwaiter().GetResult();
 
         var adoClient = new DevPulse.Infrastructure.AzureDevOps.AzureDevOpsClient(
             httpClient, appSettings.OrganizationUrl, appSettings.Project, appSettings.RepositoryFilter);
         var wiClient = new DevPulse.Infrastructure.AzureDevOps.WorkItemClient(
             httpClient, appSettings.OrganizationUrl, appSettings.Project);
 
-        _prPoller = new PollingService(adoClient, store, notifications, _settings, _debugLog);
-        _wiPoller = new WorkItemPollingService(wiClient, store, _settings, _debugLog);
+        _prPoller = new PollingService(adoClient, _store, notifications, _settings, _debugLog);
+        _wiPoller = new WorkItemPollingService(wiClient, _store, _settings, _debugLog);
 
         _prPoller.PollCompleted += async (_, _) => await RefreshTrayAsync();
         _wiPoller.PollCompleted += async (_, _) =>
@@ -50,19 +66,6 @@ public sealed class TrayApplicationContext : ApplicationContext
             if (_boardForm?.Visible == true) await _boardForm.LoadAsync();
             if (_wiPoller.LastPollFailed && _boardForm != null) _boardForm.ShowStaleBanner = true;
         };
-
-        _ = InitializeAsync(appSettings);
-    }
-
-    private async Task InitializeAsync(DevPulse.Core.Models.AppSettings appSettings)
-    {
-        await _settings.SeedDefaultsIfNeededAsync();
-
-        if (!IsConfigured(appSettings))
-        {
-            ShowSettings();
-            return;
-        }
 
         BuildTrayIcon();
         await RefreshTrayAsync();
@@ -110,8 +113,8 @@ public sealed class TrayApplicationContext : ApplicationContext
         var builder = new TrayMenuBuilder();
         var menu = builder.Build(
             inboxes, counts,
-            refreshPrs: () => _ = _prPoller.RefreshNowAsync(),
-            refreshBoard: () => _ = _wiPoller.RefreshNowAsync(),
+            refreshPrs: () => _ = _prPoller?.RefreshNowAsync(),
+            refreshBoard: () => _ = _wiPoller?.RefreshNowAsync(),
             openInbox: name => ShowInbox(name),
             openBoard: ShowBoard,
             openMuted: ShowMuted,
@@ -172,25 +175,21 @@ public sealed class TrayApplicationContext : ApplicationContext
         MessageBox.Show("Muted PRs view — coming in next iteration.", "DevPulse", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
-    private static bool IsConfigured(DevPulse.Core.Models.AppSettings s)
-        => !string.IsNullOrEmpty(s.OrganizationUrl) && !string.IsNullOrEmpty(s.Project) && SecretStore.LoadPat() != null;
+    private static bool IsConfigured(DevPulse.Core.Models.AppSettings s, string? pat)
+        => !string.IsNullOrEmpty(s.OrganizationUrl) && !string.IsNullOrEmpty(s.Project) && pat != null;
 
-    private static System.Net.Http.HttpClient CreateHttpClient()
+    private static System.Net.Http.HttpClient CreateHttpClient(string pat)
     {
-        var pat = SecretStore.LoadPat() ?? string.Empty;
         var client = new System.Net.Http.HttpClient();
-        if (!string.IsNullOrEmpty(pat))
-        {
-            client.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Basic",
-                    Convert.ToBase64String(System.Text.Encoding.ASCII.GetBytes($":{pat}")));
-        }
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Basic",
+                Convert.ToBase64String(System.Text.Encoding.ASCII.GetBytes($":{pat}")));
         return client;
     }
 
     private static Icon CreateIcon()
     {
-        var bmp = new Bitmap(16, 16);
+        using var bmp = new Bitmap(16, 16);
         using var g = Graphics.FromImage(bmp);
         g.Clear(Color.Transparent);
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;

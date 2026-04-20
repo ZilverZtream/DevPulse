@@ -131,7 +131,7 @@ public sealed class PollingService : IDisposable
 
             foreach (var thread in threads)
             {
-                foreach (var comment in thread.Comments.Where(c => c.ParentCommentId == 0 || true))
+                foreach (var comment in thread.Comments.Where(c => c.ParentCommentId == 0))
                 {
                     var eventId = _eventNorm.BuildCommentEventId(pr.PullRequestId, thread.Id, comment.Id);
                     if (await _store.EventExistsAsync(eventId)) continue;

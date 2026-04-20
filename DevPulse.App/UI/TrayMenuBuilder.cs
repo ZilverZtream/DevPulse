@@ -4,6 +4,8 @@ namespace DevPulse.App.UI;
 
 public sealed class TrayMenuBuilder
 {
+    private static readonly Font MenuFont = new("Segoe UI", 9f);
+
     public ContextMenuStrip Build(
         IReadOnlyList<InboxDefinition> inboxes,
         Dictionary<string, int> unreadCounts,
@@ -20,7 +22,7 @@ public sealed class TrayMenuBuilder
         var menu = new ContextMenuStrip();
         menu.BackColor = Color.FromArgb(36, 36, 52);
         menu.ForeColor = Color.FromArgb(220, 220, 235);
-        menu.Font = new Font("Segoe UI", 9f);
+        menu.Font = MenuFont;
 
         // Refresh submenu
         var refreshMenu = new ToolStripMenuItem("Refresh now");

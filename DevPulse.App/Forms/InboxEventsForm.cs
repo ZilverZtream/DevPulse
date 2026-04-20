@@ -19,7 +19,6 @@ public sealed class InboxEventsForm : Form
     private readonly BoardForm? _boardForm;
 
     private ListView _listView = null!;
-    private Label _staleLabel = null!;
 
     public InboxEventsForm(
         InboxViewService viewService,

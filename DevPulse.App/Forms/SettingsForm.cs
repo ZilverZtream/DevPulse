@@ -352,7 +352,19 @@ public sealed class SettingsForm : Form
 
     private void LoadInboxRules()
     {
-        // Show selected inbox as JSON for editing
+        var selectedName = _inboxList.SelectedItem?.ToString();
+        if (selectedName == null) return;
+        _ = LoadInboxRulesAsync(selectedName);
+    }
+
+    private async Task LoadInboxRulesAsync(string inboxName)
+    {
+        var inboxes = await _settings.GetInboxDefinitionsAsync();
+        var inbox = inboxes.FirstOrDefault(i => i.Name == inboxName);
+        if (inbox == null) return;
+        var json = System.Text.Json.JsonSerializer.Serialize(inbox, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        if (InvokeRequired) { Invoke(() => _inboxRulesJson.Text = json); return; }
+        _inboxRulesJson.Text = json;
     }
 
     private async Task TestConnectionAsync()

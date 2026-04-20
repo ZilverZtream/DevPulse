@@ -26,6 +26,7 @@ public sealed class BoardForm : Form
     private bool _mineOnly, _sprintOnly, _bugsOnly, _unassignedOnly;
     private IReadOnlyList<WorkItem> _allItems = [];
     private IReadOnlyList<BoardColumnDefinition> _columns = [];
+    private DevPulse.Core.Models.AppSettings _appSettings = new();
 
     public bool ShowStaleBanner
     {
@@ -125,6 +126,7 @@ public sealed class BoardForm : Form
     {
         _allItems = await _store.GetWorkItemsAsync();
         _columns = await _settings.GetBoardColumnsAsync();
+        _appSettings = await _settings.GetAppSettingsAsync();
 
         // Populate assignee dropdown
         var assignees = _allItems
@@ -134,7 +136,7 @@ public sealed class BoardForm : Form
             .OrderBy(n => n)
             .ToList();
 
-        if (InvokeRequired) { Invoke(LoadAsync); return; }
+        if (InvokeRequired) { BeginInvoke(LoadAsync); return; }
 
         _assigneeFilter.Items.Clear();
         _assigneeFilter.Items.Add("All assignees");
@@ -148,7 +150,7 @@ public sealed class BoardForm : Form
     {
         if (InvokeRequired) { Invoke(ApplyFilters); return; }
 
-        var settings = _settings.GetAppSettingsAsync().GetAwaiter().GetResult();
+        var settings = _appSettings;
         var textFilter = _searchBox.Text;
         var typeStr = _typeFilter.SelectedItem?.ToString();
         var assigneeStr = _assigneeFilter.SelectedItem?.ToString();

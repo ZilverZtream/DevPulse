@@ -109,7 +109,15 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
         {
             await using var cmd = _conn.CreateCommand();
             cmd.CommandText = """
-                SELECT * FROM events
+                SELECT event_id, event_type, event_source, event_meaning,
+                    inbox_name, is_collapsed, collapsed_count,
+                    pull_request_id, pull_request_title, pull_request_url,
+                    organization, project, repository,
+                    author_display_name, author_canonical_key, message_text, status,
+                    created_at_utc, discovered_at_utc, source_thread_id, source_comment_id,
+                    linked_work_item_id, notification_sent, is_read, matched_rule_description,
+                    is_current_user_reviewer
+                FROM events
                 WHERE inbox_name = @inbox
                 ORDER BY discovered_at_utc DESC
                 LIMIT @max
@@ -132,16 +140,12 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
         await _lock.WaitAsync(ct);
         try
         {
-            await using var tx = await _conn.BeginTransactionAsync(ct);
-            foreach (var id in ids)
-            {
-                await using var cmd = _conn.CreateCommand();
-                cmd.Transaction = (SqliteTransaction)tx;
-                cmd.CommandText = "UPDATE events SET is_read = 1 WHERE event_id = @id";
-                cmd.Parameters.AddWithValue("@id", id);
-                await cmd.ExecuteNonQueryAsync(ct);
-            }
-            await tx.CommitAsync(ct);
+            await using var cmd = _conn.CreateCommand();
+            var paramNames = ids.Select((_, i) => $"@p{i}").ToList();
+            cmd.CommandText = $"UPDATE events SET is_read = 1 WHERE event_id IN ({string.Join(",", paramNames)})";
+            for (int i = 0; i < ids.Count; i++)
+                cmd.Parameters.AddWithValue($"@p{i}", ids[i]);
+            await cmd.ExecuteNonQueryAsync(ct);
         }
         finally { _lock.Release(); }
     }
@@ -215,7 +219,13 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
         try
         {
             await using var cmd = _conn.CreateCommand();
-            cmd.CommandText = "SELECT * FROM work_items";
+            cmd.CommandText = """
+                SELECT id, title, item_type, state, board_column, priority,
+                    assigned_to_display, assigned_to_canonical, area_path, iteration_path,
+                    work_item_url, linked_pr_id, state_changed_at, days_in_state,
+                    aging_level, discovered_at
+                FROM work_items
+                """;
             await using var reader = await cmd.ExecuteReaderAsync(ct);
             var list = new List<WorkItem>();
             while (await reader.ReadAsync(ct))
@@ -411,22 +421,22 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
 
     private static WorkItem ReadWorkItem(SqliteDataReader r) => new()
     {
-        Id = r.GetInt32(0),
-        Title = r.GetString(1),
-        Type = (WorkItemType)r.GetInt32(2),
-        State = r.GetString(3),
-        BoardColumn = r.GetString(4),
-        Priority = r.GetString(5),
-        AssignedToDisplayName = r.GetString(6),
-        AssignedToCanonicalKey = r.GetString(7),
-        AreaPath = r.GetString(8),
-        IterationPath = r.GetString(9),
-        WorkItemUrl = r.GetString(10),
-        LinkedPullRequestId = r.IsDBNull(11) ? null : r.GetString(11),
-        StateChangedAtUtc = DateTimeOffset.Parse(r.GetString(12)),
-        DaysInCurrentState = r.GetInt32(13),
-        AgingLevel = (AgingLevel)r.GetInt32(14),
-        DiscoveredAtUtc = DateTimeOffset.Parse(r.GetString(15))
+        Id = r.GetInt32(r.GetOrdinal("id")),
+        Title = r.GetString(r.GetOrdinal("title")),
+        Type = (WorkItemType)r.GetInt32(r.GetOrdinal("item_type")),
+        State = r.GetString(r.GetOrdinal("state")),
+        BoardColumn = r.GetString(r.GetOrdinal("board_column")),
+        Priority = r.GetString(r.GetOrdinal("priority")),
+        AssignedToDisplayName = r.GetString(r.GetOrdinal("assigned_to_display")),
+        AssignedToCanonicalKey = r.GetString(r.GetOrdinal("assigned_to_canonical")),
+        AreaPath = r.GetString(r.GetOrdinal("area_path")),
+        IterationPath = r.GetString(r.GetOrdinal("iteration_path")),
+        WorkItemUrl = r.GetString(r.GetOrdinal("work_item_url")),
+        LinkedPullRequestId = r.IsDBNull(r.GetOrdinal("linked_pr_id")) ? null : r.GetString(r.GetOrdinal("linked_pr_id")),
+        StateChangedAtUtc = DateTimeOffset.Parse(r.GetString(r.GetOrdinal("state_changed_at"))),
+        DaysInCurrentState = r.GetInt32(r.GetOrdinal("days_in_state")),
+        AgingLevel = (AgingLevel)r.GetInt32(r.GetOrdinal("aging_level")),
+        DiscoveredAtUtc = DateTimeOffset.Parse(r.GetString(r.GetOrdinal("discovered_at")))
     };
 
     public async ValueTask DisposeAsync()
