@@ -6,6 +6,7 @@ partial class BoardForm
 
     private System.Windows.Forms.Label _staleBanner;
     private System.Windows.Forms.Panel _toolbar;
+    private System.Windows.Forms.FlowLayoutPanel _toolbarFlow;
     private System.Windows.Forms.Panel _boardPanel;
     private System.Windows.Forms.TextBox _searchBox;
     private System.Windows.Forms.ComboBox _typeFilter;
@@ -29,6 +30,7 @@ partial class BoardForm
         components = new System.ComponentModel.Container();
         _staleBanner = new System.Windows.Forms.Label();
         _toolbar = new System.Windows.Forms.Panel();
+        _toolbarFlow = new System.Windows.Forms.FlowLayoutPanel();
         _boardPanel = new System.Windows.Forms.Panel();
         _searchBox = new System.Windows.Forms.TextBox();
         _typeFilter = new System.Windows.Forms.ComboBox();
@@ -40,6 +42,7 @@ partial class BoardForm
         _btnUnassignedOnly = new System.Windows.Forms.Button();
         _btnRefresh = new System.Windows.Forms.Button();
         _toolbar.SuspendLayout();
+        _toolbarFlow.SuspendLayout();
         SuspendLayout();
         //
         // _staleBanner
@@ -59,6 +62,7 @@ partial class BoardForm
         _searchBox.BackColor = System.Drawing.Color.FromArgb(42, 42, 60);
         _searchBox.ForeColor = System.Drawing.Color.FromArgb(220, 220, 235);
         _searchBox.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
+        _searchBox.Margin = new System.Windows.Forms.Padding(4, 4, 4, 0);
         _searchBox.TextChanged += new System.EventHandler(SearchBox_TextChanged);
         //
         // _typeFilter
@@ -70,6 +74,7 @@ partial class BoardForm
         _typeFilter.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
         _typeFilter.Items.AddRange(new object[] { "All types", "Feature", "Bug", "Task", "User Story" });
         _typeFilter.SelectedIndex = 0;
+        _typeFilter.Margin = new System.Windows.Forms.Padding(4, 4, 4, 0);
         _typeFilter.SelectedIndexChanged += new System.EventHandler(TypeFilter_SelectedIndexChanged);
         //
         // _assigneeFilter
@@ -81,6 +86,7 @@ partial class BoardForm
         _assigneeFilter.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
         _assigneeFilter.Items.Add("All assignees");
         _assigneeFilter.SelectedIndex = 0;
+        _assigneeFilter.Margin = new System.Windows.Forms.Padding(4, 4, 4, 0);
         _assigneeFilter.SelectedIndexChanged += new System.EventHandler(AssigneeFilter_SelectedIndexChanged);
         //
         // _priorityFilter
@@ -92,6 +98,7 @@ partial class BoardForm
         _priorityFilter.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
         _priorityFilter.Items.AddRange(new object[] { "All priorities", "P1", "P2", "P3" });
         _priorityFilter.SelectedIndex = 0;
+        _priorityFilter.Margin = new System.Windows.Forms.Padding(4, 4, 4, 0);
         _priorityFilter.SelectedIndexChanged += new System.EventHandler(PriorityFilter_SelectedIndexChanged);
         //
         // _btnMineOnly
@@ -103,6 +110,7 @@ partial class BoardForm
         _btnMineOnly.BackColor = System.Drawing.Color.FromArgb(50, 50, 78);
         _btnMineOnly.ForeColor = System.Drawing.Color.FromArgb(200, 200, 220);
         _btnMineOnly.Padding = new System.Windows.Forms.Padding(8, 0, 8, 0);
+        _btnMineOnly.Margin = new System.Windows.Forms.Padding(4, 4, 4, 0);
         _btnMineOnly.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(80, 80, 110);
         _btnMineOnly.Click += new System.EventHandler(BtnMineOnly_Click);
         //
@@ -115,6 +123,7 @@ partial class BoardForm
         _btnSprintOnly.BackColor = System.Drawing.Color.FromArgb(50, 50, 78);
         _btnSprintOnly.ForeColor = System.Drawing.Color.FromArgb(200, 200, 220);
         _btnSprintOnly.Padding = new System.Windows.Forms.Padding(8, 0, 8, 0);
+        _btnSprintOnly.Margin = new System.Windows.Forms.Padding(4, 4, 4, 0);
         _btnSprintOnly.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(80, 80, 110);
         _btnSprintOnly.Click += new System.EventHandler(BtnSprintOnly_Click);
         //
@@ -127,6 +136,7 @@ partial class BoardForm
         _btnBugsOnly.BackColor = System.Drawing.Color.FromArgb(50, 50, 78);
         _btnBugsOnly.ForeColor = System.Drawing.Color.FromArgb(200, 200, 220);
         _btnBugsOnly.Padding = new System.Windows.Forms.Padding(8, 0, 8, 0);
+        _btnBugsOnly.Margin = new System.Windows.Forms.Padding(4, 4, 4, 0);
         _btnBugsOnly.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(80, 80, 110);
         _btnBugsOnly.Click += new System.EventHandler(BtnBugsOnly_Click);
         //
@@ -139,6 +149,7 @@ partial class BoardForm
         _btnUnassignedOnly.BackColor = System.Drawing.Color.FromArgb(50, 50, 78);
         _btnUnassignedOnly.ForeColor = System.Drawing.Color.FromArgb(200, 200, 220);
         _btnUnassignedOnly.Padding = new System.Windows.Forms.Padding(8, 0, 8, 0);
+        _btnUnassignedOnly.Margin = new System.Windows.Forms.Padding(4, 4, 4, 0);
         _btnUnassignedOnly.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(80, 80, 110);
         _btnUnassignedOnly.Click += new System.EventHandler(BtnUnassignedOnly_Click);
         //
@@ -151,8 +162,26 @@ partial class BoardForm
         _btnRefresh.BackColor = System.Drawing.Color.FromArgb(50, 50, 78);
         _btnRefresh.ForeColor = System.Drawing.Color.FromArgb(200, 200, 220);
         _btnRefresh.Padding = new System.Windows.Forms.Padding(8, 0, 8, 0);
+        _btnRefresh.Margin = new System.Windows.Forms.Padding(4, 4, 4, 0);
         _btnRefresh.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(80, 80, 110);
         _btnRefresh.Click += new System.EventHandler(BtnRefresh_Click);
+        //
+        // _toolbarFlow
+        //
+        _toolbarFlow.Dock = System.Windows.Forms.DockStyle.Fill;
+        _toolbarFlow.FlowDirection = System.Windows.Forms.FlowDirection.LeftToRight;
+        _toolbarFlow.WrapContents = false;
+        _toolbarFlow.BackColor = System.Drawing.Color.FromArgb(36, 36, 52);
+        _toolbarFlow.Padding = new System.Windows.Forms.Padding(4, 5, 4, 5);
+        _toolbarFlow.Controls.Add(_searchBox);
+        _toolbarFlow.Controls.Add(_typeFilter);
+        _toolbarFlow.Controls.Add(_assigneeFilter);
+        _toolbarFlow.Controls.Add(_priorityFilter);
+        _toolbarFlow.Controls.Add(_btnMineOnly);
+        _toolbarFlow.Controls.Add(_btnSprintOnly);
+        _toolbarFlow.Controls.Add(_btnBugsOnly);
+        _toolbarFlow.Controls.Add(_btnUnassignedOnly);
+        _toolbarFlow.Controls.Add(_btnRefresh);
         //
         // _toolbar
         //
@@ -160,6 +189,7 @@ partial class BoardForm
         _toolbar.Dock = System.Windows.Forms.DockStyle.Top;
         _toolbar.BackColor = System.Drawing.Color.FromArgb(36, 36, 52);
         _toolbar.Padding = new System.Windows.Forms.Padding(8, 6, 8, 6);
+        _toolbar.Controls.Add(_toolbarFlow);
         //
         // _boardPanel
         //
@@ -179,6 +209,8 @@ partial class BoardForm
         Controls.Add(_boardPanel);
         Controls.Add(_toolbar);
         Controls.Add(_staleBanner);
+        _toolbarFlow.ResumeLayout(false);
+        _toolbarFlow.PerformLayout();
         _toolbar.ResumeLayout(false);
         ResumeLayout(false);
     }

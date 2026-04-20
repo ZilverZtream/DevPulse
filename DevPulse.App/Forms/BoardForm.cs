@@ -36,23 +36,6 @@ public sealed partial class BoardForm : Form
         _store = store;
         _settings = settings;
         InitializeComponent();
-        BuildToolbarLayout();
-    }
-
-    private void BuildToolbarLayout()
-    {
-        _toolbar.SuspendLayout();
-        _toolbar.Controls.Add(_searchBox);
-        int x = _searchBox.Right + 8;
-        _typeFilter.Left = x; _toolbar.Controls.Add(_typeFilter); x = _typeFilter.Right + 8;
-        _assigneeFilter.Left = x; _toolbar.Controls.Add(_assigneeFilter); x = _assigneeFilter.Right + 8;
-        _priorityFilter.Left = x; _toolbar.Controls.Add(_priorityFilter); x = _priorityFilter.Right + 16;
-        _btnMineOnly.Left = x; _toolbar.Controls.Add(_btnMineOnly); x = _btnMineOnly.Right + 6;
-        _btnSprintOnly.Left = x; _toolbar.Controls.Add(_btnSprintOnly); x = _btnSprintOnly.Right + 6;
-        _btnBugsOnly.Left = x; _toolbar.Controls.Add(_btnBugsOnly); x = _btnBugsOnly.Right + 6;
-        _btnUnassignedOnly.Left = x; _toolbar.Controls.Add(_btnUnassignedOnly); x = _btnUnassignedOnly.Right + 6;
-        _btnRefresh.Left = x + 8; _toolbar.Controls.Add(_btnRefresh);
-        _toolbar.ResumeLayout(false);
     }
 
     public async Task LoadAsync()
