@@ -145,8 +145,9 @@ public sealed class PollingService : PollingLoopBase
                     var eventId = _eventNorm.BuildCommentEventId(pr.PullRequestId, thread.Id, comment.Id);
                     if (existingIds.Contains(eventId)) continue;
 
-                    var authorCanon = idNorm.Normalize(comment.Author);
-                    var source = idNorm.ClassifySource(comment.Author);
+                    var authorIdentity = comment.Author ?? new IdentityRefDto();
+                    var authorCanon = idNorm.Normalize(authorIdentity);
+                    var source = idNorm.ClassifySource(authorIdentity);
                     var meaning = _eventNorm.DeriveCommentMeaning(comment.Content, appSettings.CurrentUserCanonicalKey);
 
                     allNewEvents.Add(new DevOpsEvent
@@ -161,7 +162,7 @@ public sealed class PollingService : PollingLoopBase
                         Organization = pr.Organization,
                         Project = pr.Project,
                         Repository = pr.RepositoryName,
-                        AuthorDisplayName = comment.Author?.DisplayName ?? string.Empty,
+                        AuthorDisplayName = authorIdentity.DisplayName ?? string.Empty,
                         AuthorCanonicalKey = authorCanon,
                         MessageText = comment.Content,
                         Status = pr.Status,
