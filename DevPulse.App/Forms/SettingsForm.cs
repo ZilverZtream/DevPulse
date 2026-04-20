@@ -412,7 +412,7 @@ public sealed class SettingsForm : Form
             var orgUrl = _orgUrl.Text.TrimEnd('/');
             var pat = _patBox.Text;
             using var handler = new AzureDevOpsAuthHandler(orgUrl, pat);
-            using var http = new System.Net.Http.HttpClient(handler, disposeHandler: false)
+            using var http = new System.Net.Http.HttpClient(handler)
             {
                 Timeout = TimeSpan.FromSeconds(10)
             };

@@ -22,9 +22,6 @@ public sealed class WorkItemClient : IWorkItemClient
     private const string Fields = "System.Id,System.Title,System.WorkItemType,System.State,Microsoft.VSTS.Common.Priority," +
                                   "System.AssignedTo,System.AreaPath,System.IterationPath,System.StateChangeDate,System.TeamProject";
 
-    private static string ValidateWiqlPath(string value, string paramName) =>
-        WiqlPathGuard.ValidatePath(value, paramName);
-
     public WorkItemClient(HttpClient http, string orgUrl, string project)
     {
         _http = http;
@@ -43,8 +40,8 @@ public sealed class WorkItemClient : IWorkItemClient
 
     private async Task<List<int>> GetIdsViaWiqlAsync(string areaPath, string? iterationPath, CancellationToken ct)
     {
-        var safeArea = ValidateWiqlPath(areaPath, nameof(areaPath));
-        var safeIter = string.IsNullOrEmpty(iterationPath) ? null : ValidateWiqlPath(iterationPath, nameof(iterationPath));
+        var safeArea = WiqlPathGuard.ValidatePath(areaPath, nameof(areaPath));
+        var safeIter = string.IsNullOrEmpty(iterationPath) ? null : WiqlPathGuard.ValidatePath(iterationPath, nameof(iterationPath));
 
         var wiql = $"SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '{WiqlLiteral(_project)}' " +
                    $"AND [System.AreaPath] UNDER '{WiqlLiteral(safeArea)}' " +
