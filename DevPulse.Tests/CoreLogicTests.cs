@@ -1,3 +1,4 @@
+using DevPulse.App.Services;
 using DevPulse.Core.Enums;
 using DevPulse.Core.Interfaces;
 using DevPulse.Core.Models;
@@ -113,5 +114,33 @@ public class WiqlPathValidationTests
     public void ValidateWiqlPath_InvalidPaths_Throws(string path)
     {
         Assert.Throws<ArgumentException>(() => WiqlPathGuard.ValidatePath(path, "areaPath"));
+    }
+}
+
+public class PollingLoopBaseTests
+{
+    private sealed class CountingPoller : PollingLoopBase
+    {
+        public int InitialPollCount;
+        protected override string TrackName => "test";
+        protected override Task ExecutePollAsync(CancellationToken ct)
+        {
+            Interlocked.Increment(ref InitialPollCount);
+            return Task.CompletedTask;
+        }
+    }
+
+    [Fact]
+    public async Task Start_CalledTwice_OnlyOneInitialPollFires()
+    {
+        using var poller = new CountingPoller();
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        poller.PollCompleted += (_, _) => tcs.TrySetResult();
+
+        poller.Start(60);
+        poller.Start(60);
+
+        await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, poller.InitialPollCount);
     }
 }

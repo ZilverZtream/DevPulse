@@ -7,6 +7,7 @@ public abstract class PollingLoopBase : IDisposable, IAsyncDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly SemaphoreSlim _runLock = new(1, 1);
     private Task? _loopTask;
+    private int _started; // one-shot: Start() is idempotent after first call; does not reset on Dispose
 
     public event EventHandler? PollCompleted;
     public bool LastPollFailed { get; private set; }
@@ -17,6 +18,7 @@ public abstract class PollingLoopBase : IDisposable, IAsyncDisposable
 
     public void Start(int intervalMinutes)
     {
+        if (Interlocked.CompareExchange(ref _started, 1, 0) != 0) return;
         var clamped = Math.Clamp(intervalMinutes, 1, 1440);
         _loopTask = RunLoopAsync(TimeSpan.FromMinutes(clamped), _cts.Token);
     }
