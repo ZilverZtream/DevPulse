@@ -439,7 +439,7 @@ public sealed class SettingsForm : Form
         if (dlg.ShowDialog() != DialogResult.OK) return;
         var safe = System.Text.Json.JsonSerializer.Serialize(_appSettings, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
         File.WriteAllText(dlg.FileName, safe);
-        MessageBox.Show($"Exported to {dlg.FileName}\n(PAT redacted)", "DevPulse", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        MessageBox.Show($"Exported to {dlg.FileName}\nNote: Personal Access Token is stored in the Windows credential store and is not included in this export.", "DevPulse", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
