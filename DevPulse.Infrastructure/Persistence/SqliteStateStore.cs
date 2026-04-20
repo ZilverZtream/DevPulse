@@ -198,7 +198,7 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
                 cmd.CommandText = $"UPDATE events SET is_read = 1 WHERE event_id IN ({string.Join(",", paramNames)})";
                 for (int i = 0; i < chunk.Length; i++)
                     cmd.Parameters.AddWithValue($"@p{i}", chunk[i]);
-                await cmd.ExecuteNonQueryAsync(ct);
+                await NonQueryRetryAsync(cmd, ct);
             }
         }
         finally { _lock.Release(); }
@@ -455,7 +455,10 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
             cmd.CommandText = "SELECT last_success FROM poll_state WHERE track = @track";
             cmd.Parameters.AddWithValue("@track", track);
             var val = await cmd.ExecuteScalarAsync(ct);
-            return val == null || val == DBNull.Value ? null : DateTimeOffset.Parse((string)val);
+            if (val == null || val == DBNull.Value) return null;
+            var s = (string)val;
+            return DateTimeOffset.TryParseExact(s, "O", null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt)
+                ? dt : null;
         }
         finally { _lock.Release(); }
     }
@@ -469,7 +472,7 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
             cmd.CommandText = "INSERT INTO poll_state VALUES(@track, @ts) ON CONFLICT(track) DO UPDATE SET last_success=excluded.last_success";
             cmd.Parameters.AddWithValue("@track", track);
             cmd.Parameters.AddWithValue("@ts", ts.ToString("O"));
-            await cmd.ExecuteNonQueryAsync(ct);
+            await NonQueryRetryAsync(cmd, ct);
         }
         finally { _lock.Release(); }
     }
@@ -522,7 +525,7 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
                 )
                 """;
             cmd.Parameters.AddWithValue("@cutoff", DateTimeOffset.UtcNow.AddDays(-retainDays).ToString("O"));
-            await cmd.ExecuteNonQueryAsync(ct);
+            await NonQueryRetryAsync(cmd, ct);
         }
         finally { _lock.Release(); }
     }
@@ -552,7 +555,7 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
             cmd.CommandText = "INSERT INTO kv_settings VALUES(@key,@val) ON CONFLICT(key) DO UPDATE SET value=excluded.value";
             cmd.Parameters.AddWithValue("@key", key);
             cmd.Parameters.AddWithValue("@val", value);
-            await cmd.ExecuteNonQueryAsync(ct);
+            await NonQueryRetryAsync(cmd, ct);
         }
         finally { _lock.Release(); }
     }
@@ -570,38 +573,44 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
         return null;
     }
 
-    private static DevOpsEvent ReadEvent(SqliteDataReader r) => new()
+    private static DevOpsEvent ReadEvent(SqliteDataReader r)
     {
-        EventId = r.GetString(r.GetOrdinal("event_id")),
-        EventType = (DevOpsEventType)r.GetInt32(r.GetOrdinal("event_type")),
-        EventSource = (PrEventSource)r.GetInt32(r.GetOrdinal("event_source")),
-        EventMeaning = (EventMeaning)r.GetInt32(r.GetOrdinal("event_meaning")),
-        InboxName = r.GetString(r.GetOrdinal("inbox_name")),
-        CollapsedCount = r.GetInt32(r.GetOrdinal("collapsed_count")),
-        PullRequestId = r.GetInt32(r.GetOrdinal("pull_request_id")),
-        PullRequestTitle = r.GetString(r.GetOrdinal("pull_request_title")),
-        PullRequestUrl = r.GetString(r.GetOrdinal("pull_request_url")),
-        Organization = r.GetString(r.GetOrdinal("organization")),
-        Project = r.GetString(r.GetOrdinal("project")),
-        Repository = r.GetString(r.GetOrdinal("repository")),
-        AuthorDisplayName = r.GetString(r.GetOrdinal("author_display_name")),
-        AuthorCanonicalKey = r.GetString(r.GetOrdinal("author_canonical_key")),
-        MessageText = r.GetString(r.GetOrdinal("message_text")),
-        Status = r.GetString(r.GetOrdinal("status")),
-        CreatedAtUtc = ParseStoredDate(r, "created_at_utc") ?? DateTimeOffset.MinValue,
-        DiscoveredAtUtc = ParseStoredDate(r, "discovered_at_utc") ?? DateTimeOffset.MinValue,
-        SourceThreadId = r.GetString(r.GetOrdinal("source_thread_id")),
-        SourceCommentId = r.GetString(r.GetOrdinal("source_comment_id")),
-        LinkedWorkItemId = r.IsDBNull(r.GetOrdinal("linked_work_item_id")) ? null : r.GetString(r.GetOrdinal("linked_work_item_id")),
-        NotificationSent = r.GetInt32(r.GetOrdinal("notification_sent")) == 1,
-        IsRead = r.GetInt32(r.GetOrdinal("is_read")) == 1,
-        MatchedRuleDescription = r.IsDBNull(r.GetOrdinal("matched_rule_description")) ? null : r.GetString(r.GetOrdinal("matched_rule_description")),
-        IsCurrentUserReviewer = r.GetInt32(r.GetOrdinal("is_current_user_reviewer")) == 1
-    };
+        var ordLinkedWi = r.GetOrdinal("linked_work_item_id");
+        var ordRuleDesc = r.GetOrdinal("matched_rule_description");
+        return new DevOpsEvent
+        {
+            EventId = r.GetString(r.GetOrdinal("event_id")),
+            EventType = (DevOpsEventType)r.GetInt32(r.GetOrdinal("event_type")),
+            EventSource = (PrEventSource)r.GetInt32(r.GetOrdinal("event_source")),
+            EventMeaning = (EventMeaning)r.GetInt32(r.GetOrdinal("event_meaning")),
+            InboxName = r.GetString(r.GetOrdinal("inbox_name")),
+            CollapsedCount = r.GetInt32(r.GetOrdinal("collapsed_count")),
+            PullRequestId = r.GetInt32(r.GetOrdinal("pull_request_id")),
+            PullRequestTitle = r.GetString(r.GetOrdinal("pull_request_title")),
+            PullRequestUrl = r.GetString(r.GetOrdinal("pull_request_url")),
+            Organization = r.GetString(r.GetOrdinal("organization")),
+            Project = r.GetString(r.GetOrdinal("project")),
+            Repository = r.GetString(r.GetOrdinal("repository")),
+            AuthorDisplayName = r.GetString(r.GetOrdinal("author_display_name")),
+            AuthorCanonicalKey = r.GetString(r.GetOrdinal("author_canonical_key")),
+            MessageText = r.GetString(r.GetOrdinal("message_text")),
+            Status = r.GetString(r.GetOrdinal("status")),
+            CreatedAtUtc = ParseStoredDate(r, "created_at_utc") ?? DateTimeOffset.MinValue,
+            DiscoveredAtUtc = ParseStoredDate(r, "discovered_at_utc") ?? DateTimeOffset.MinValue,
+            SourceThreadId = r.GetString(r.GetOrdinal("source_thread_id")),
+            SourceCommentId = r.GetString(r.GetOrdinal("source_comment_id")),
+            LinkedWorkItemId = r.IsDBNull(ordLinkedWi) ? null : r.GetString(ordLinkedWi),
+            NotificationSent = r.GetInt32(r.GetOrdinal("notification_sent")) == 1,
+            IsRead = r.GetInt32(r.GetOrdinal("is_read")) == 1,
+            MatchedRuleDescription = r.IsDBNull(ordRuleDesc) ? null : r.GetString(ordRuleDesc),
+            IsCurrentUserReviewer = r.GetInt32(r.GetOrdinal("is_current_user_reviewer")) == 1
+        };
+    }
 
     private static WorkItem ReadWorkItem(SqliteDataReader r)
     {
         var stateChangedAt = ParseStoredDate(r, "state_changed_at") ?? DateTimeOffset.MinValue;
+        var ordLinkedPr = r.GetOrdinal("linked_pr_id");
         return new WorkItem
         {
             Id = r.GetInt32(r.GetOrdinal("id")),
@@ -615,9 +624,9 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
             AreaPath = r.GetString(r.GetOrdinal("area_path")),
             IterationPath = r.GetString(r.GetOrdinal("iteration_path")),
             WorkItemUrl = r.GetString(r.GetOrdinal("work_item_url")),
-            LinkedPullRequestId = r.IsDBNull(r.GetOrdinal("linked_pr_id")) ? null : r.GetString(r.GetOrdinal("linked_pr_id")),
+            LinkedPullRequestId = r.IsDBNull(ordLinkedPr) ? null : r.GetString(ordLinkedPr),
             StateChangedAtUtc = stateChangedAt,
-            DaysInCurrentState = Math.Max(0, (int)(DateTimeOffset.UtcNow - stateChangedAt).TotalDays),
+            DaysInCurrentState = r.GetInt32(r.GetOrdinal("days_in_state")),
             AgingLevel = (AgingLevel)r.GetInt32(r.GetOrdinal("aging_level")),
             DiscoveredAtUtc = ParseStoredDate(r, "discovered_at") ?? DateTimeOffset.MinValue
         };
