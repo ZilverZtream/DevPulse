@@ -59,9 +59,12 @@ public sealed class RuleEngine
             return true;
 
         var attentionPack = packs.FirstOrDefault(p => p.Name.Equals(settings.NeedsAttentionKeywordPackName, StringComparison.OrdinalIgnoreCase));
-        if (attentionPack != null &&
-            attentionPack.Keywords.Any(k => msg.Contains(k, StringComparison.OrdinalIgnoreCase)))
-            return true;
+        if (attentionPack != null)
+        {
+            var keywords = ExpandKeywords(attentionPack.Keywords, packs).ToList();
+            if (keywords.Any(k => msg.Contains(k, StringComparison.OrdinalIgnoreCase)))
+                return true;
+        }
 
         return false;
     }
