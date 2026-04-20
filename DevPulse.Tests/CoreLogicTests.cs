@@ -153,7 +153,7 @@ public class RuleEngineNullMessageTests
     private static readonly IReadOnlyList<KeywordPack> NoPacks = [];
 
     [Fact]
-    public void AssignInbox_NullMessageText_DoesNotThrow()
+    public void AssignInbox_NullMessageText_RoutesToFallback()
     {
         var inboxes = new List<InboxDefinition>
         {
@@ -170,23 +170,25 @@ public class RuleEngineNullMessageTests
             Status = "active"
         };
 
-        var ex = Record.Exception(() => _engine.AssignInbox(evt, NoWatchers, inboxes, NoPacks, Settings));
+        var result = _engine.AssignInbox(evt, NoWatchers, inboxes, NoPacks, Settings);
 
-        Assert.Null(ex);
+        Assert.Equal("All", result);
     }
 
     [Fact]
-    public void AssignInbox_NullMessageText_WithKeywordRule_DoesNotThrow()
+    public void AssignInbox_NullMessageText_DoesNotMatchKeywordRule()
     {
         var inboxes = new List<InboxDefinition>
         {
             new()
             {
                 Name = "Alerts", IsEnabled = true, IsSystemInbox = false, Order = 1,
-                Rules =
-                [
-                    new InboxRule { Enabled = true, MessageContainsAny = ["ALERT"] }
-                ]
+                Rules = [new InboxRule { Enabled = true, MessageContainsAny = ["ALERT"] }]
+            },
+            new()
+            {
+                Name = "Other", IsEnabled = true, IsSystemInbox = false, Order = 2,
+                Rules = []
             }
         };
         var evt = new DevOpsEvent
@@ -200,23 +202,20 @@ public class RuleEngineNullMessageTests
             Status = "active"
         };
 
-        var ex = Record.Exception(() => _engine.AssignInbox(evt, NoWatchers, inboxes, NoPacks, Settings));
+        var result = _engine.AssignInbox(evt, NoWatchers, inboxes, NoPacks, Settings);
 
-        Assert.Null(ex);
+        Assert.Equal("Other", result); // null message doesn't match "ALERT"; falls to fallback
     }
 
     [Fact]
-    public void AssignInbox_NullMessageText_WithExcludeRule_DoesNotThrow()
+    public void AssignInbox_NullMessageText_PassesThroughExcludeRule()
     {
         var inboxes = new List<InboxDefinition>
         {
             new()
             {
                 Name = "Filtered", IsEnabled = true, IsSystemInbox = false, Order = 1,
-                Rules =
-                [
-                    new InboxRule { Enabled = true, ExcludeMessageContains = "noise" }
-                ]
+                Rules = [new InboxRule { Enabled = true, ExcludeMessageContains = "noise" }]
             }
         };
         var evt = new DevOpsEvent
@@ -230,8 +229,8 @@ public class RuleEngineNullMessageTests
             Status = "active"
         };
 
-        var ex = Record.Exception(() => _engine.AssignInbox(evt, NoWatchers, inboxes, NoPacks, Settings));
+        var result = _engine.AssignInbox(evt, NoWatchers, inboxes, NoPacks, Settings);
 
-        Assert.Null(ex);
+        Assert.Equal("Filtered", result); // empty string doesn't match "noise" exclude, rule passes, routes here
     }
 }
