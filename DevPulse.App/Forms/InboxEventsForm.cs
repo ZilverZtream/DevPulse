@@ -98,17 +98,18 @@ public sealed class InboxEventsForm : Form
         try
         {
             var events = await _viewService.GetLatestAsync(_inboxName, 100);
+            if (IsDisposed) return;
             _listView.Items.Clear();
             foreach (var evt in events)
             {
                 var icon = evt.IsCollapsed ? "⊞" : evt.IsRead ? "·" : "●";
                 var item = new ListViewItem(icon);
                 item.SubItems.Add($"#{evt.PullRequestId}");
-                item.SubItems.Add(evt.PullRequestTitle.Length > 35 ? evt.PullRequestTitle[..35] + "…" : evt.PullRequestTitle);
+                item.SubItems.Add(evt.PullRequestTitle.Length > 35 ? TruncateRunes(evt.PullRequestTitle, 35) + "…" : evt.PullRequestTitle);
                 item.SubItems.Add(evt.AuthorDisplayName);
                 var summary = evt.IsCollapsed
                     ? $"{evt.CollapsedCount} events collapsed"
-                    : evt.MessageText.Length > 40 ? evt.MessageText[..40] + "…" : evt.MessageText;
+                    : evt.MessageText.Length > 40 ? TruncateRunes(evt.MessageText, 40) + "…" : evt.MessageText;
                 item.SubItems.Add(summary);
                 item.SubItems.Add(evt.DiscoveredAtUtc.ToLocalTime().ToString("MM/dd HH:mm"));
                 item.Tag = evt;
@@ -133,6 +134,7 @@ public sealed class InboxEventsForm : Form
         if (hit.Item?.Tag is not DevOpsEvent evt) return;
 
         var menu = new ContextMenuStrip();
+        menu.Closed += (_, _) => menu.Dispose();
         menu.Items.Add("Open PR in browser", null, (_, _) => OpenPr(evt));
 
         if (!string.IsNullOrEmpty(evt.LinkedWorkItemId))
@@ -203,6 +205,9 @@ public sealed class InboxEventsForm : Form
         await _viewService.MarkReadAsync(events.Select(e => e.EventId));
         await LoadEventsAsync();
     }
+
+    private static string TruncateRunes(string s, int maxRunes) =>
+        string.Concat(s.EnumerateRunes().Take(maxRunes).Select(r => r.ToString()));
 
     private static Button DarkButton(string text)
     {
