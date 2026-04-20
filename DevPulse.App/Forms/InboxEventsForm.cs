@@ -99,23 +99,27 @@ public sealed class InboxEventsForm : Form
         {
             var events = await _viewService.GetLatestAsync(_inboxName, 100);
             if (IsDisposed) return;
-            _listView.Items.Clear();
-            foreach (var evt in events)
+            try
             {
-                var icon = evt.IsCollapsed ? "⊞" : evt.IsRead ? "·" : "●";
-                var item = new ListViewItem(icon);
-                item.SubItems.Add($"#{evt.PullRequestId}");
-                item.SubItems.Add(evt.PullRequestTitle.Length > 35 ? TruncateRunes(evt.PullRequestTitle, 35) + "…" : evt.PullRequestTitle);
-                item.SubItems.Add(evt.AuthorDisplayName);
-                var summary = evt.IsCollapsed
-                    ? $"{evt.CollapsedCount} events collapsed"
-                    : evt.MessageText.Length > 40 ? TruncateRunes(evt.MessageText, 40) + "…" : evt.MessageText;
-                item.SubItems.Add(summary);
-                item.SubItems.Add(evt.DiscoveredAtUtc.ToLocalTime().ToString("MM/dd HH:mm"));
-                item.Tag = evt;
-                item.ForeColor = evt.IsRead ? TextSecondary : TextPrimary;
-                _listView.Items.Add(item);
+                _listView.Items.Clear();
+                foreach (var evt in events)
+                {
+                    var icon = evt.IsCollapsed ? "⊞" : evt.IsRead ? "·" : "●";
+                    var item = new ListViewItem(icon);
+                    item.SubItems.Add($"#{evt.PullRequestId}");
+                    item.SubItems.Add(evt.PullRequestTitle.EnumerateRunes().Skip(35).Any() ? TruncateRunes(evt.PullRequestTitle, 35) + "…" : evt.PullRequestTitle);
+                    item.SubItems.Add(evt.AuthorDisplayName);
+                    var summary = evt.IsCollapsed
+                        ? $"{evt.CollapsedCount} events collapsed"
+                        : evt.MessageText.EnumerateRunes().Skip(40).Any() ? TruncateRunes(evt.MessageText, 40) + "…" : evt.MessageText;
+                    item.SubItems.Add(summary);
+                    item.SubItems.Add(evt.DiscoveredAtUtc.ToLocalTime().ToString("MM/dd HH:mm"));
+                    item.Tag = evt;
+                    item.ForeColor = evt.IsRead ? TextSecondary : TextPrimary;
+                    _listView.Items.Add(item);
+                }
             }
+            catch (ObjectDisposedException) { return; }
         }
         finally { _loading = false; }
     }
