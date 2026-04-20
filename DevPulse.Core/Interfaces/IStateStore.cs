@@ -16,6 +16,7 @@ public interface IStateStore
     Task SaveMuteEntryAsync(MuteEntry entry, CancellationToken ct = default);
     Task RemoveMuteEntryAsync(MuteEntry entry, CancellationToken ct = default);
     Task<IReadOnlyList<MuteEntry>> GetActiveMutesAsync(CancellationToken ct = default);
+    Task PurgeExpiredMutesAsync(CancellationToken ct = default);
 
     Task<DateTimeOffset?> GetLastSuccessfulPollAsync(string track, CancellationToken ct = default);
     Task SetLastSuccessfulPollAsync(string track, DateTimeOffset ts, CancellationToken ct = default);

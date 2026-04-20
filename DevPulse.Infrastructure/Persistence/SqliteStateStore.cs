@@ -69,57 +69,83 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
         try
         {
             await using var tx = await _conn.BeginTransactionAsync(ct);
+            await using var cmd = _conn.CreateCommand();
+            cmd.Transaction = (SqliteTransaction)tx;
+            cmd.CommandText = """
+                INSERT OR IGNORE INTO events (
+                    event_id, event_type, event_source, event_meaning,
+                    inbox_name, is_collapsed, collapsed_count,
+                    pull_request_id, pull_request_title, pull_request_url,
+                    organization, project, repository,
+                    author_display_name, author_canonical_key, message_text, status,
+                    created_at_utc, discovered_at_utc, source_thread_id, source_comment_id,
+                    linked_work_item_id, notification_sent, is_read, matched_rule_description,
+                    is_current_user_reviewer
+                ) VALUES (
+                    @eid, @etype, @esrc, @emean,
+                    @inbox, @collapsed, @cnt,
+                    @prid, @prtitle, @prurl,
+                    @org, @proj, @repo,
+                    @adisplay, @acanon, @msg, @status,
+                    @created, @disc, @tid, @cid,
+                    @linked, @notif, @read, @rule,
+                    @reviewer
+                )
+                """;
+            cmd.Parameters.AddWithValue("@eid", string.Empty);
+            cmd.Parameters.AddWithValue("@etype", 0);
+            cmd.Parameters.AddWithValue("@esrc", 0);
+            cmd.Parameters.AddWithValue("@emean", 0);
+            cmd.Parameters.AddWithValue("@inbox", string.Empty);
+            cmd.Parameters.AddWithValue("@collapsed", 0);
+            cmd.Parameters.AddWithValue("@cnt", 0);
+            cmd.Parameters.AddWithValue("@prid", 0);
+            cmd.Parameters.AddWithValue("@prtitle", string.Empty);
+            cmd.Parameters.AddWithValue("@prurl", string.Empty);
+            cmd.Parameters.AddWithValue("@org", string.Empty);
+            cmd.Parameters.AddWithValue("@proj", string.Empty);
+            cmd.Parameters.AddWithValue("@repo", string.Empty);
+            cmd.Parameters.AddWithValue("@adisplay", string.Empty);
+            cmd.Parameters.AddWithValue("@acanon", string.Empty);
+            cmd.Parameters.AddWithValue("@msg", string.Empty);
+            cmd.Parameters.AddWithValue("@status", string.Empty);
+            cmd.Parameters.AddWithValue("@created", string.Empty);
+            cmd.Parameters.AddWithValue("@disc", string.Empty);
+            cmd.Parameters.AddWithValue("@tid", string.Empty);
+            cmd.Parameters.AddWithValue("@cid", string.Empty);
+            cmd.Parameters.AddWithValue("@linked", DBNull.Value);
+            cmd.Parameters.AddWithValue("@notif", 0);
+            cmd.Parameters.AddWithValue("@read", 0);
+            cmd.Parameters.AddWithValue("@rule", DBNull.Value);
+            cmd.Parameters.AddWithValue("@reviewer", 0);
             foreach (var e in events)
             {
-                await using var cmd = _conn.CreateCommand();
-                cmd.Transaction = (SqliteTransaction)tx;
-                cmd.CommandText = """
-                    INSERT OR IGNORE INTO events (
-                        event_id, event_type, event_source, event_meaning,
-                        inbox_name, is_collapsed, collapsed_count,
-                        pull_request_id, pull_request_title, pull_request_url,
-                        organization, project, repository,
-                        author_display_name, author_canonical_key, message_text, status,
-                        created_at_utc, discovered_at_utc, source_thread_id, source_comment_id,
-                        linked_work_item_id, notification_sent, is_read, matched_rule_description,
-                        is_current_user_reviewer
-                    ) VALUES (
-                        @eid, @etype, @esrc, @emean,
-                        @inbox, @collapsed, @cnt,
-                        @prid, @prtitle, @prurl,
-                        @org, @proj, @repo,
-                        @adisplay, @acanon, @msg, @status,
-                        @created, @disc, @tid, @cid,
-                        @linked, @notif, @read, @rule,
-                        @reviewer
-                    )
-                    """;
-                cmd.Parameters.AddWithValue("@eid", e.EventId);
-                cmd.Parameters.AddWithValue("@etype", (int)e.EventType);
-                cmd.Parameters.AddWithValue("@esrc", (int)e.EventSource);
-                cmd.Parameters.AddWithValue("@emean", (int)e.EventMeaning);
-                cmd.Parameters.AddWithValue("@inbox", e.InboxName);
-                cmd.Parameters.AddWithValue("@collapsed", e.CollapsedCount > 1 ? 1 : 0);
-                cmd.Parameters.AddWithValue("@cnt", e.CollapsedCount);
-                cmd.Parameters.AddWithValue("@prid", e.PullRequestId);
-                cmd.Parameters.AddWithValue("@prtitle", e.PullRequestTitle);
-                cmd.Parameters.AddWithValue("@prurl", e.PullRequestUrl);
-                cmd.Parameters.AddWithValue("@org", e.Organization);
-                cmd.Parameters.AddWithValue("@proj", e.Project);
-                cmd.Parameters.AddWithValue("@repo", e.Repository);
-                cmd.Parameters.AddWithValue("@adisplay", e.AuthorDisplayName);
-                cmd.Parameters.AddWithValue("@acanon", e.AuthorCanonicalKey);
-                cmd.Parameters.AddWithValue("@msg", e.MessageText);
-                cmd.Parameters.AddWithValue("@status", e.Status);
-                cmd.Parameters.AddWithValue("@created", e.CreatedAtUtc.ToString("O"));
-                cmd.Parameters.AddWithValue("@disc", e.DiscoveredAtUtc.ToString("O"));
-                cmd.Parameters.AddWithValue("@tid", e.SourceThreadId);
-                cmd.Parameters.AddWithValue("@cid", e.SourceCommentId);
-                cmd.Parameters.AddWithValue("@linked", (object?)e.LinkedWorkItemId ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@notif", e.NotificationSent ? 1 : 0);
-                cmd.Parameters.AddWithValue("@read", e.IsRead ? 1 : 0);
-                cmd.Parameters.AddWithValue("@rule", (object?)e.MatchedRuleDescription ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@reviewer", e.IsCurrentUserReviewer ? 1 : 0);
+                cmd.Parameters["@eid"].Value = e.EventId;
+                cmd.Parameters["@etype"].Value = (int)e.EventType;
+                cmd.Parameters["@esrc"].Value = (int)e.EventSource;
+                cmd.Parameters["@emean"].Value = (int)e.EventMeaning;
+                cmd.Parameters["@inbox"].Value = e.InboxName;
+                cmd.Parameters["@collapsed"].Value = e.CollapsedCount > 1 ? 1 : 0;
+                cmd.Parameters["@cnt"].Value = e.CollapsedCount;
+                cmd.Parameters["@prid"].Value = e.PullRequestId;
+                cmd.Parameters["@prtitle"].Value = e.PullRequestTitle;
+                cmd.Parameters["@prurl"].Value = e.PullRequestUrl;
+                cmd.Parameters["@org"].Value = e.Organization;
+                cmd.Parameters["@proj"].Value = e.Project;
+                cmd.Parameters["@repo"].Value = e.Repository;
+                cmd.Parameters["@adisplay"].Value = e.AuthorDisplayName;
+                cmd.Parameters["@acanon"].Value = e.AuthorCanonicalKey;
+                cmd.Parameters["@msg"].Value = e.MessageText;
+                cmd.Parameters["@status"].Value = e.Status;
+                cmd.Parameters["@created"].Value = e.CreatedAtUtc.ToString("O");
+                cmd.Parameters["@disc"].Value = e.DiscoveredAtUtc.ToString("O");
+                cmd.Parameters["@tid"].Value = e.SourceThreadId;
+                cmd.Parameters["@cid"].Value = e.SourceCommentId;
+                cmd.Parameters["@linked"].Value = (object?)e.LinkedWorkItemId ?? DBNull.Value;
+                cmd.Parameters["@notif"].Value = e.NotificationSent ? 1 : 0;
+                cmd.Parameters["@read"].Value = e.IsRead ? 1 : 0;
+                cmd.Parameters["@rule"].Value = (object?)e.MatchedRuleDescription ?? DBNull.Value;
+                cmd.Parameters["@reviewer"].Value = e.IsCurrentUserReviewer ? 1 : 0;
                 await NonQueryRetryAsync(cmd, ct);
             }
             await tx.CommitAsync(ct);
@@ -165,12 +191,15 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
         await _lock.WaitAsync(ct);
         try
         {
-            await using var cmd = _conn.CreateCommand();
-            var paramNames = ids.Select((_, i) => $"@p{i}").ToList();
-            cmd.CommandText = $"UPDATE events SET is_read = 1 WHERE event_id IN ({string.Join(",", paramNames)})";
-            for (int i = 0; i < ids.Count; i++)
-                cmd.Parameters.AddWithValue($"@p{i}", ids[i]);
-            await cmd.ExecuteNonQueryAsync(ct);
+            foreach (var chunk in ids.Chunk(500))
+            {
+                await using var cmd = _conn.CreateCommand();
+                var paramNames = chunk.Select((_, i) => $"@p{i}").ToList();
+                cmd.CommandText = $"UPDATE events SET is_read = 1 WHERE event_id IN ({string.Join(",", paramNames)})";
+                for (int i = 0; i < chunk.Length; i++)
+                    cmd.Parameters.AddWithValue($"@p{i}", chunk[i]);
+                await cmd.ExecuteNonQueryAsync(ct);
+            }
         }
         finally { _lock.Release(); }
     }
@@ -315,16 +344,24 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
         }
     }
 
+    public async Task PurgeExpiredMutesAsync(CancellationToken ct = default)
+    {
+        await _lock.WaitAsync(ct);
+        try
+        {
+            await using var cmd = _conn.CreateCommand();
+            cmd.CommandText = "DELETE FROM mute_entries WHERE expires_at IS NOT NULL AND expires_at <= @now";
+            cmd.Parameters.AddWithValue("@now", DateTimeOffset.UtcNow.ToString("O"));
+            await NonQueryRetryAsync(cmd, ct);
+        }
+        finally { _lock.Release(); }
+    }
+
     public async Task<IReadOnlyList<MuteEntry>> GetActiveMutesAsync(CancellationToken ct = default)
     {
         await _lock.WaitAsync(ct);
         try
         {
-            await using var purge = _conn.CreateCommand();
-            purge.CommandText = "DELETE FROM mute_entries WHERE expires_at IS NOT NULL AND expires_at <= @now";
-            purge.Parameters.AddWithValue("@now", DateTimeOffset.UtcNow.ToString("O"));
-            await purge.ExecuteNonQueryAsync(ct);
-
             await using var cmd = _conn.CreateCommand();
             cmd.CommandText = "SELECT scope, expires_at, pr_id, author_key FROM mute_entries";
             await using var reader = await cmd.ExecuteReaderAsync(ct);

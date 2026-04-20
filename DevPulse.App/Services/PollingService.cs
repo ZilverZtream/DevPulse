@@ -43,6 +43,7 @@ public sealed class PollingService : PollingLoopBase
         var packs = await _settings.GetKeywordPacksAsync();
         var aliases = await _settings.GetIdentityAliasesAsync();
         var watchers = await _settings.GetWatchersAsync();
+        await _store.PurgeExpiredMutesAsync(ct);
         var activeMutes = await _store.GetActiveMutesAsync(ct);
 
         var idNorm = new IdentityNormalizer(aliases, appSettings.BotIdentityPatterns);
@@ -178,6 +179,9 @@ public sealed class PollingService : PollingLoopBase
 
         var unmuted = _muteService.Filter(newEvents, activeMutes, pollTime);
         var collapsed = _collapser.Collapse(unmuted, pollTime);
+
+        Log.Information("Poll 'prs': {PrCount} PRs, {Candidates} candidate events, {New} new, {Muted} muted, {Saved} saved",
+            prs.Count, allNewEvents.Count, newEvents.Count, newEvents.Count - unmuted.Count, collapsed.Count);
 
         foreach (var evt in collapsed)
         {
