@@ -54,6 +54,13 @@ public sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
+        if (!Uri.TryCreate(appSettings.OrganizationUrl, UriKind.Absolute, out _))
+        {
+            Log.Warning("InitializeAsync: OrganizationUrl is not a valid absolute URI — opening settings");
+            ShowSettings();
+            return;
+        }
+
         var httpClient = CreateHttpClient(appSettings.OrganizationUrl, patResult.Value!);
         var notifications = new WindowsToastNotificationService();
 
@@ -112,8 +119,9 @@ public sealed class TrayApplicationContext : ApplicationContext
             RebuildMenu(inboxes, counts, appSettings);
         }
 
-        var nma = counts.GetValueOrDefault("Needs My Attention");
-        var text = nma > 0 ? $"DevPulse — Needs My Attention: {nma}" : "DevPulse — No attention needed";
+        var systemInboxName = inboxes.FirstOrDefault(i => i.IsSystemInbox)?.Name ?? "Needs My Attention";
+        var nma = counts.GetValueOrDefault(systemInboxName);
+        var text = nma > 0 ? $"DevPulse — {systemInboxName}: {nma}" : "DevPulse — No attention needed";
         if (_trayIcon != null)
             _trayIcon.Text = text.Length > 63 ? text[..63] : text;
     }
@@ -229,8 +237,9 @@ public sealed class TrayApplicationContext : ApplicationContext
         if (disposing)
         {
             _trayIcon?.Dispose();
-            _prPoller?.Dispose();
-            _wiPoller?.Dispose();
+            _prPoller?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(10));
+            _wiPoller?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(10));
+            _store.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5));
         }
         base.Dispose(disposing);
     }
