@@ -56,7 +56,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
                     cmd.Parameters.AddWithValue($"@p{i}", chunk[i]);
                 await using var reader = await cmd.ExecuteReaderAsync(ct);
                 while (await reader.ReadAsync(ct))
-                    result.Add(reader.GetString(0));
+                    result.Add(reader.GetString(reader.GetOrdinal("event_id")));
             }
             return result;
         }
@@ -225,45 +225,61 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
         try
         {
             await using var tx = await _conn.BeginTransactionAsync(ct);
+            await using var cmd = _conn.CreateCommand();
+            cmd.Transaction = (SqliteTransaction)tx;
+            cmd.CommandText = """
+                INSERT INTO work_items (
+                    id, title, item_type, state, board_column, priority,
+                    assigned_to_display, assigned_to_canonical, area_path, iteration_path, work_item_url,
+                    linked_pr_id, state_changed_at, days_in_state, aging_level, discovered_at
+                ) VALUES (
+                    @id, @title, @type, @state, @col, @pri,
+                    @adisplay, @acanon, @area, @iter, @url,
+                    @linkedpr, @statedt, @days, @aging, @disc
+                )
+                ON CONFLICT(id) DO UPDATE SET
+                    title=excluded.title, item_type=excluded.item_type, state=excluded.state,
+                    board_column=excluded.board_column, priority=excluded.priority,
+                    assigned_to_display=excluded.assigned_to_display, assigned_to_canonical=excluded.assigned_to_canonical,
+                    area_path=excluded.area_path, iteration_path=excluded.iteration_path,
+                    work_item_url=excluded.work_item_url, linked_pr_id=excluded.linked_pr_id,
+                    state_changed_at=excluded.state_changed_at, days_in_state=excluded.days_in_state,
+                    aging_level=excluded.aging_level, discovered_at=excluded.discovered_at
+                """;
+            cmd.Parameters.AddWithValue("@id", 0);
+            cmd.Parameters.AddWithValue("@title", string.Empty);
+            cmd.Parameters.AddWithValue("@type", 0);
+            cmd.Parameters.AddWithValue("@state", string.Empty);
+            cmd.Parameters.AddWithValue("@col", string.Empty);
+            cmd.Parameters.AddWithValue("@pri", string.Empty);
+            cmd.Parameters.AddWithValue("@adisplay", string.Empty);
+            cmd.Parameters.AddWithValue("@acanon", string.Empty);
+            cmd.Parameters.AddWithValue("@area", string.Empty);
+            cmd.Parameters.AddWithValue("@iter", string.Empty);
+            cmd.Parameters.AddWithValue("@url", string.Empty);
+            cmd.Parameters.AddWithValue("@linkedpr", DBNull.Value);
+            cmd.Parameters.AddWithValue("@statedt", string.Empty);
+            cmd.Parameters.AddWithValue("@days", 0);
+            cmd.Parameters.AddWithValue("@aging", 0);
+            cmd.Parameters.AddWithValue("@disc", string.Empty);
             foreach (var workItem in items)
             {
-                await using var cmd = _conn.CreateCommand();
-                cmd.Transaction = (SqliteTransaction)tx;
-                cmd.CommandText = """
-                    INSERT INTO work_items (
-                        id, title, item_type, state, board_column, priority,
-                        assigned_to_display, assigned_to_canonical, area_path, iteration_path, work_item_url,
-                        linked_pr_id, state_changed_at, days_in_state, aging_level, discovered_at
-                    ) VALUES (
-                        @id, @title, @type, @state, @col, @pri,
-                        @adisplay, @acanon, @area, @iter, @url,
-                        @linkedpr, @statedt, @days, @aging, @disc
-                    )
-                    ON CONFLICT(id) DO UPDATE SET
-                        title=excluded.title, item_type=excluded.item_type, state=excluded.state,
-                        board_column=excluded.board_column, priority=excluded.priority,
-                        assigned_to_display=excluded.assigned_to_display, assigned_to_canonical=excluded.assigned_to_canonical,
-                        area_path=excluded.area_path, iteration_path=excluded.iteration_path,
-                        work_item_url=excluded.work_item_url, linked_pr_id=excluded.linked_pr_id,
-                        state_changed_at=excluded.state_changed_at, days_in_state=excluded.days_in_state,
-                        aging_level=excluded.aging_level, discovered_at=excluded.discovered_at
-                    """;
-                cmd.Parameters.AddWithValue("@id", workItem.Id);
-                cmd.Parameters.AddWithValue("@title", workItem.Title);
-                cmd.Parameters.AddWithValue("@type", (int)workItem.Type);
-                cmd.Parameters.AddWithValue("@state", workItem.State);
-                cmd.Parameters.AddWithValue("@col", workItem.BoardColumn);
-                cmd.Parameters.AddWithValue("@pri", workItem.Priority);
-                cmd.Parameters.AddWithValue("@adisplay", workItem.AssignedToDisplayName);
-                cmd.Parameters.AddWithValue("@acanon", workItem.AssignedToCanonicalKey);
-                cmd.Parameters.AddWithValue("@area", workItem.AreaPath);
-                cmd.Parameters.AddWithValue("@iter", workItem.IterationPath);
-                cmd.Parameters.AddWithValue("@url", workItem.WorkItemUrl);
-                cmd.Parameters.AddWithValue("@linkedpr", (object?)workItem.LinkedPullRequestId ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@statedt", workItem.StateChangedAtUtc.ToString("O"));
-                cmd.Parameters.AddWithValue("@days", workItem.DaysInCurrentState);
-                cmd.Parameters.AddWithValue("@aging", (int)workItem.AgingLevel);
-                cmd.Parameters.AddWithValue("@disc", workItem.DiscoveredAtUtc.ToString("O"));
+                cmd.Parameters["@id"].Value = workItem.Id;
+                cmd.Parameters["@title"].Value = workItem.Title;
+                cmd.Parameters["@type"].Value = (int)workItem.Type;
+                cmd.Parameters["@state"].Value = workItem.State;
+                cmd.Parameters["@col"].Value = workItem.BoardColumn;
+                cmd.Parameters["@pri"].Value = workItem.Priority;
+                cmd.Parameters["@adisplay"].Value = workItem.AssignedToDisplayName;
+                cmd.Parameters["@acanon"].Value = workItem.AssignedToCanonicalKey;
+                cmd.Parameters["@area"].Value = workItem.AreaPath;
+                cmd.Parameters["@iter"].Value = workItem.IterationPath;
+                cmd.Parameters["@url"].Value = workItem.WorkItemUrl;
+                cmd.Parameters["@linkedpr"].Value = (object?)workItem.LinkedPullRequestId ?? DBNull.Value;
+                cmd.Parameters["@statedt"].Value = workItem.StateChangedAtUtc.ToString("O");
+                cmd.Parameters["@days"].Value = workItem.DaysInCurrentState;
+                cmd.Parameters["@aging"].Value = (int)workItem.AgingLevel;
+                cmd.Parameters["@disc"].Value = workItem.DiscoveredAtUtc.ToString("O");
                 await NonQueryRetryAsync(cmd, ct);
             }
             await tx.CommitAsync(ct);
@@ -314,7 +330,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
             cmd.Parameters.AddWithValue("@exp", (object?)entry.ExpiresAtUtc?.ToString("O") ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@prid", (object?)entry.PrId ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@akey", entry.AuthorKey);
-            await cmd.ExecuteNonQueryAsync(ct);
+            await NonQueryRetryAsync(cmd, ct);
         }
         finally { _lock.Release(); }
     }
@@ -328,7 +344,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
             cmd.CommandText = "DELETE FROM mute_entries WHERE scope = @scope AND key = @key";
             cmd.Parameters.AddWithValue("@scope", (int)entry.Scope);
             cmd.Parameters.AddWithValue("@key", entry.DbKey);
-            await cmd.ExecuteNonQueryAsync(ct);
+            await NonQueryRetryAsync(cmd, ct);
         }
         finally { _lock.Release(); }
     }
@@ -372,7 +388,15 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
             var list = new List<MuteEntry>();
             while (await reader.ReadAsync(ct))
             {
-                var exp = reader.IsDBNull(ordExp) ? (DateTimeOffset?)null : DateTimeOffset.Parse(reader.GetString(ordExp));
+                DateTimeOffset? exp = null;
+                if (!reader.IsDBNull(ordExp))
+                {
+                    var s = reader.GetString(ordExp);
+                    if (DateTimeOffset.TryParseExact(s, "O", null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt))
+                        exp = dt;
+                    else
+                        Log.Warning("SqliteStateStore: unparseable mute expiry date: {Value}", s);
+                }
                 list.Add(new MuteEntry
                 {
                     Scope = (MuteScope)reader.GetInt32(ordScope),
@@ -503,7 +527,8 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
 
     private static DateTimeOffset? ParseStoredDate(SqliteDataReader r, string column)
     {
-        var s = r.IsDBNull(r.GetOrdinal(column)) ? null : r.GetString(r.GetOrdinal(column));
+        var ord = r.GetOrdinal(column);
+        var s = r.IsDBNull(ord) ? null : r.GetString(ord);
         if (s == null) return null;
         if (DateTimeOffset.TryParseExact(s, "O", null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt))
             return dt;
