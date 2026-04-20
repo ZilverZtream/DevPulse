@@ -65,7 +65,7 @@ public sealed partial class WorkItemNormalizer
     private static AgingLevel ComputeAging(int days, BoardColumnDefinition col)
     {
         if (days >= col.AgingDaysStale) return AgingLevel.Stale;
-        if (days >= col.AgingDaysWarning) return AgingLevel.Aging;
+        if (days >= col.AgingDaysWarning) return AgingLevel.Warning;
         return AgingLevel.Fresh;
     }
 
