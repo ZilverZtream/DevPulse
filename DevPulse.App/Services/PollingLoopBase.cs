@@ -27,23 +27,23 @@ public abstract class PollingLoopBase : IDisposable, IAsyncDisposable
 
     private async Task RunLoopAsync(TimeSpan interval, CancellationToken ct)
     {
-        await ExecuteSafeAsync(ct);
+        await ExecuteSafeAsync(ct).ConfigureAwait(false);
         using var timer = new PeriodicTimer(interval);
         try
         {
-            while (await timer.WaitForNextTickAsync(ct))
-                await ExecuteSafeAsync(ct);
+            while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
+                await ExecuteSafeAsync(ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { }
     }
 
     private async Task ExecuteSafeAsync(CancellationToken ct)
     {
-        if (!await _runLock.WaitAsync(0, ct)) return;
+        if (!await _runLock.WaitAsync(0, ct).ConfigureAwait(false)) return;
         try
         {
             ct.ThrowIfCancellationRequested();
-            await ExecutePollAsync(ct);
+            await ExecutePollAsync(ct).ConfigureAwait(false);
             LastPollFailed = false;
             PollCompleted?.Invoke(this, EventArgs.Empty);
         }
@@ -52,7 +52,7 @@ public abstract class PollingLoopBase : IDisposable, IAsyncDisposable
         {
             Log.Error(ex, "{Track} poll cycle failed", TrackName);
             LastPollFailed = true;
-            await OnPollFailedAsync(ex, ct);
+            await OnPollFailedAsync(ex, ct).ConfigureAwait(false);
         }
         finally
         {
