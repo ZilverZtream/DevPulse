@@ -15,7 +15,15 @@ internal static class AdoRetryHelper
             var code = (int)last.StatusCode;
             if (code == 401) throw new HttpRequestException($"ADO GET unauthorized (401) — check PAT: {ep}", null, last.StatusCode);
             if (code == 403) throw new HttpRequestException($"ADO GET forbidden (403) — missing permission: {ep}", null, last.StatusCode);
-            if (code == 429) throw new HttpRequestException($"ADO GET rate-limited (429): {ep}", null, last.StatusCode);
+            if (code == 429)
+            {
+                var retryAfter = last.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(30);
+                if (retryAfter > TimeSpan.FromSeconds(60)) retryAfter = TimeSpan.FromSeconds(60);
+                await Task.Delay(retryAfter, ct);
+                last = await http.GetAsync(url, ct);
+                if (last.IsSuccessStatusCode) return last;
+                throw new HttpRequestException($"ADO GET rate-limited (429) after retry: {ep}", null, last.StatusCode);
+            }
             if (code < 500 || attempt == 3) break;
 
             await Task.Delay(delay + TimeSpan.FromMilliseconds(Random.Shared.Next(0, 500)), ct);
@@ -37,7 +45,15 @@ internal static class AdoRetryHelper
             var code = (int)last.StatusCode;
             if (code == 401) throw new HttpRequestException($"ADO POST unauthorized (401) — check PAT: {ep}", null, last.StatusCode);
             if (code == 403) throw new HttpRequestException($"ADO POST forbidden (403) — missing permission: {ep}", null, last.StatusCode);
-            if (code == 429) throw new HttpRequestException($"ADO POST rate-limited (429): {ep}", null, last.StatusCode);
+            if (code == 429)
+            {
+                var retryAfter = last.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(30);
+                if (retryAfter > TimeSpan.FromSeconds(60)) retryAfter = TimeSpan.FromSeconds(60);
+                await Task.Delay(retryAfter, ct);
+                last = await http.PostAsync(url, content, ct);
+                if (last.IsSuccessStatusCode) return last;
+                throw new HttpRequestException($"ADO POST rate-limited (429) after retry: {ep}", null, last.StatusCode);
+            }
             if (code < 500 || attempt == 3) break;
 
             await Task.Delay(delay + TimeSpan.FromMilliseconds(Random.Shared.Next(0, 500)), ct);

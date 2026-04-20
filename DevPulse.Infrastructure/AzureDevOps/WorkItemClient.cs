@@ -49,12 +49,20 @@ public sealed class WorkItemClient : IWorkItemClient
                    "AND [System.State] <> 'Removed' ORDER BY [System.ChangedDate] DESC";
 
         const int pageSize = 500;
+        const int maxPages = 20;
         var allIds = new List<int>();
         var skip = 0;
+        int pageIndex = 0;
         var serializedBody = JsonSerializer.Serialize(new { query = wiql });
 
         while (true)
         {
+            if (pageIndex >= maxPages)
+            {
+                Log.Warning("WorkItemClient: WIQL page cap reached ({Max} pages / {MaxItems} items) for area path {Area}",
+                    maxPages, maxPages * pageSize, areaPath);
+                break;
+            }
             var url = $"{_orgUrl}/{Uri.EscapeDataString(_project)}/_apis/wit/wiql?$top={pageSize}&$skip={skip}&api-version={ApiVersions.WorkItemQueryLanguage}";
             var content = new StringContent(serializedBody, Encoding.UTF8, "application/json");
             var response = await AdoRetryHelper.PostWithRetryAsync(_http, url, content, ct);
@@ -66,6 +74,7 @@ public sealed class WorkItemClient : IWorkItemClient
             allIds.AddRange(page);
             if (page.Count < pageSize) break;
             skip += pageSize;
+            pageIndex++;
         }
 
         return allIds;
