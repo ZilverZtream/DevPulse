@@ -46,15 +46,18 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
         await _lock.WaitAsync(ct);
         try
         {
-            await using var cmd = _conn.CreateCommand();
-            var paramNames = ids.Select((_, i) => $"@p{i}").ToList();
-            cmd.CommandText = $"SELECT event_id FROM events WHERE event_id IN ({string.Join(",", paramNames)})";
-            for (int i = 0; i < ids.Count; i++)
-                cmd.Parameters.AddWithValue($"@p{i}", ids[i]);
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
             var result = new HashSet<string>(StringComparer.Ordinal);
-            while (await reader.ReadAsync(ct))
-                result.Add(reader.GetString(0));
+            foreach (var chunk in ids.Chunk(500))
+            {
+                await using var cmd = _conn.CreateCommand();
+                var paramNames = chunk.Select((_, i) => $"@p{i}").ToList();
+                cmd.CommandText = $"SELECT event_id FROM events WHERE event_id IN ({string.Join(",", paramNames)})";
+                for (int i = 0; i < chunk.Length; i++)
+                    cmd.Parameters.AddWithValue($"@p{i}", chunk[i]);
+                await using var reader = await cmd.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
+                    result.Add(reader.GetString(0));
+            }
             return result;
         }
         finally { _lock.Release(); }
@@ -198,7 +201,11 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
                 await using var cmd = _conn.CreateCommand();
                 cmd.Transaction = (SqliteTransaction)tx;
                 cmd.CommandText = """
-                    INSERT INTO work_items VALUES (
+                    INSERT INTO work_items (
+                        id, title, item_type, state, board_column, priority,
+                        assigned_to_display, assigned_to_canonical, area_path, iteration_path, work_item_url,
+                        linked_pr_id, state_changed_at, days_in_state, aging_level, discovered_at
+                    ) VALUES (
                         @id, @title, @type, @state, @col, @pri,
                         @adisplay, @acanon, @area, @iter, @url,
                         @linkedpr, @statedt, @days, @aging, @disc
@@ -228,7 +235,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
                 cmd.Parameters.AddWithValue("@days", workItem.DaysInCurrentState);
                 cmd.Parameters.AddWithValue("@aging", (int)workItem.AgingLevel);
                 cmd.Parameters.AddWithValue("@disc", workItem.DiscoveredAtUtc.ToString("O"));
-                await cmd.ExecuteNonQueryAsync(ct);
+                await NonQueryRetryAsync(cmd, ct);
             }
             await tx.CommitAsync(ct);
         }
@@ -319,7 +326,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
             await purge.ExecuteNonQueryAsync(ct);
 
             await using var cmd = _conn.CreateCommand();
-            cmd.CommandText = "SELECT scope, key, expires_at, pr_id, author_key FROM mute_entries";
+            cmd.CommandText = "SELECT scope, expires_at, pr_id, author_key FROM mute_entries";
             await using var reader = await cmd.ExecuteReaderAsync(ct);
             var ordScope = reader.GetOrdinal("scope");
             var ordExp = reader.GetOrdinal("expires_at");
@@ -399,7 +406,9 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
             cmd.Parameters.AddWithValue("@id", prId);
             await using var reader = await cmd.ExecuteReaderAsync(ct);
             if (!await reader.ReadAsync(ct)) return (null, null);
-            return (reader.GetString(0), reader.GetString(1));
+            var ordStatus = reader.GetOrdinal("status");
+            var ordVotesJson = reader.GetOrdinal("votes_json");
+            return (reader.GetString(ordStatus), reader.GetString(ordVotesJson));
         }
         finally { _lock.Release(); }
     }
@@ -518,5 +527,6 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
     {
         await _conn.CloseAsync();
         _conn.Dispose();
+        _lock.Dispose();
     }
 }
