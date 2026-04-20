@@ -44,7 +44,7 @@ public sealed class MuteService
     {
         Scope = MuteScope.Author,
         AuthorKey = canonicalKey,
-        ExpiresAtUtc = now.Date.AddDays(1)
+        ExpiresAtUtc = new DateTimeOffset(now.UtcDateTime.Date.AddDays(1), TimeSpan.Zero)
     };
 
     public static MuteEntry CreateAuthorMutePermanent(string canonicalKey) => new()

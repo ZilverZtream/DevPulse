@@ -21,6 +21,7 @@ public sealed class InboxEventsForm : Form
     private readonly BoardForm? _boardForm;
 
     private ListView _listView = null!;
+    private bool _loading;
 
     public InboxEventsForm(
         InboxViewService viewService,
@@ -92,24 +93,30 @@ public sealed class InboxEventsForm : Form
 
     private async Task LoadEventsAsync()
     {
-        var events = await _viewService.GetLatestAsync(_inboxName, 100);
-        _listView.Items.Clear();
-        foreach (var evt in events)
+        if (_loading) return;
+        _loading = true;
+        try
         {
-            var icon = evt.IsCollapsed ? "⊞" : evt.IsRead ? "·" : "●";
-            var item = new ListViewItem(icon);
-            item.SubItems.Add($"#{evt.PullRequestId}");
-            item.SubItems.Add(evt.PullRequestTitle.Length > 35 ? evt.PullRequestTitle[..35] + "…" : evt.PullRequestTitle);
-            item.SubItems.Add(evt.AuthorDisplayName);
-            var summary = evt.IsCollapsed
-                ? $"{evt.CollapsedCount} events collapsed"
-                : evt.MessageText.Length > 40 ? evt.MessageText[..40] + "…" : evt.MessageText;
-            item.SubItems.Add(summary);
-            item.SubItems.Add(evt.DiscoveredAtUtc.ToLocalTime().ToString("MM/dd HH:mm"));
-            item.Tag = evt;
-            item.ForeColor = evt.IsRead ? TextSecondary : TextPrimary;
-            _listView.Items.Add(item);
+            var events = await _viewService.GetLatestAsync(_inboxName, 100);
+            _listView.Items.Clear();
+            foreach (var evt in events)
+            {
+                var icon = evt.IsCollapsed ? "⊞" : evt.IsRead ? "·" : "●";
+                var item = new ListViewItem(icon);
+                item.SubItems.Add($"#{evt.PullRequestId}");
+                item.SubItems.Add(evt.PullRequestTitle.Length > 35 ? evt.PullRequestTitle[..35] + "…" : evt.PullRequestTitle);
+                item.SubItems.Add(evt.AuthorDisplayName);
+                var summary = evt.IsCollapsed
+                    ? $"{evt.CollapsedCount} events collapsed"
+                    : evt.MessageText.Length > 40 ? evt.MessageText[..40] + "…" : evt.MessageText;
+                item.SubItems.Add(summary);
+                item.SubItems.Add(evt.DiscoveredAtUtc.ToLocalTime().ToString("MM/dd HH:mm"));
+                item.Tag = evt;
+                item.ForeColor = evt.IsRead ? TextSecondary : TextPrimary;
+                _listView.Items.Add(item);
+            }
         }
+        finally { _loading = false; }
     }
 
     private void OnDoubleClick(object? sender, MouseEventArgs e)

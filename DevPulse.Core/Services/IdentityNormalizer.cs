@@ -18,7 +18,7 @@ public sealed class IdentityNormalizer
     public string Normalize(IdentityRefDto identity)
     {
         var raw = string.IsNullOrWhiteSpace(identity.UniqueName)
-            ? identity.DisplayName
+            ? identity.DisplayName ?? string.Empty
             : identity.UniqueName;
 
         foreach (var alias in _aliases)

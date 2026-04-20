@@ -258,6 +258,32 @@ public class WorkItemNormalizerFallbackClockTests
     }
 }
 
+public class MuteServiceTimezoneTests
+{
+    [Fact]
+    public void CreateAuthorMuteToday_ExpiresAtMidnightUtcNextDay()
+    {
+        var nowUtc = new DateTimeOffset(2024, 6, 15, 23, 59, 0, TimeSpan.Zero);
+
+        var entry = MuteService.CreateAuthorMuteToday("user@corp.com", nowUtc);
+
+        Assert.Equal(new DateTimeOffset(2024, 6, 16, 0, 0, 0, TimeSpan.Zero), entry.ExpiresAtUtc);
+    }
+
+    [Fact]
+    public void CreateAuthorMuteToday_PositiveOffsetTimezone_UsesUtcDate()
+    {
+        // UTC is June 15, but local time (+5h) is already June 16 at 03:00
+        var nowWithOffset = new DateTimeOffset(2024, 6, 15, 22, 0, 0, TimeSpan.Zero)
+            .ToOffset(TimeSpan.FromHours(5));
+
+        var entry = MuteService.CreateAuthorMuteToday("user@corp.com", nowWithOffset);
+
+        // Should expire at midnight UTC June 16 — NOT midnight UTC June 17
+        Assert.Equal(new DateTimeOffset(2024, 6, 16, 0, 0, 0, TimeSpan.Zero), entry.ExpiresAtUtc);
+    }
+}
+
 public class PollErrorClassifierTests
 {
     [Theory]

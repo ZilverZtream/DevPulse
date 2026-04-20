@@ -43,7 +43,6 @@ public sealed class BoardForm : Form
         _store = store;
         _settings = settings;
         InitializeComponent();
-        LoadAsync().FireAndForget(nameof(LoadAsync));
     }
 
     private void InitializeComponent()
@@ -195,8 +194,6 @@ public sealed class BoardForm : Form
             grouped.TryGetValue(col.Name, out var colItems);
             colItems ??= [];
 
-            var colFilteredItems = filteredItems.Where(i => i.BoardColumn == col.Name).ToList();
-
             var panel = new BoardColumnPanel(col.Name, colIndex)
             {
                 Height = _boardPanel.Height - 20,
@@ -204,7 +201,7 @@ public sealed class BoardForm : Form
                 Top = 4,
                 Anchor = AnchorStyles.Top | AnchorStyles.Bottom
             };
-            panel.SetItems(colItems, colFilteredItems);
+            panel.SetItems(colItems);
             _boardPanel.Controls.Add(panel);
             x += panel.Width + 8;
             colIndex++;
