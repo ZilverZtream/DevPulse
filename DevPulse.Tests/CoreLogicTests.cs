@@ -32,6 +32,37 @@ public class WorkItemNormalizerTests
 
 public class RuleEngineTests
 {
+    [Fact]
+    public void AssignInbox_EmptyKeywordInMessageContainsAny_RoutesToFallback()
+    {
+        var ruleInbox = new InboxDefinition
+        {
+            Name = "Conditional",
+            IsEnabled = true,
+            Order = 0,
+            IsSystemInbox = false,
+            Rules = [new InboxRule { Enabled = true, MessageContainsAny = ["", "   ", "nope"] }]
+        };
+        var fallbackInbox = new InboxDefinition
+        {
+            Name = "Fallback",
+            IsEnabled = true,
+            Order = 1,
+            IsSystemInbox = false,
+            Rules = []
+        };
+        var evt = new DevOpsEvent
+        {
+            MessageText = "hello world",   // does not contain "nope"; blank entries must not match
+            AuthorCanonicalKey = "user@corp.com",
+            Status = "active", Repository = "repo", Project = "proj"
+        };
+
+        var result = new RuleEngine().AssignInbox(evt, [], [ruleInbox, fallbackInbox], [], new AppSettings());
+
+        // If empty string were treated as wildcard, result would be "Conditional"
+        Assert.Equal("Fallback", result);
+    }
 }
 
 public class IdentityNormalizerTests
