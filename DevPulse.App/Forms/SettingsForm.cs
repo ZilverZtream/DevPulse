@@ -378,7 +378,7 @@ public sealed class SettingsForm : Form
             if (row.IsNewRow) continue;
             var name = row.Cells["name"].Value?.ToString() ?? string.Empty;
             if (string.IsNullOrEmpty(name)) continue;
-            var states = (row.Cells["states"].Value?.ToString() ?? string.Empty).Split(',', StringSplitOptions.TrimEntries).ToList();
+            var states = (row.Cells["states"].Value?.ToString() ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
             _ = int.TryParse(row.Cells["warn"].Value?.ToString(), out int warn);
             _ = int.TryParse(row.Cells["stale"].Value?.ToString(), out int stale);
             columns.Add(new BoardColumnDefinition { Name = name, Order = order++, MappedStates = states, AgingDaysWarning = warn, AgingDaysStale = stale });
