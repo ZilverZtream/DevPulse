@@ -63,6 +63,7 @@ public sealed class RuleEngine
     {
         if (!evt.IsCurrentUserReviewer) return false;
         if (evt.EventSource == PrEventSource.Bot || evt.EventSource == PrEventSource.System) return false;
+        var msg = evt.MessageText ?? string.Empty;
 
         if (evt.EventMeaning == EventMeaning.Blocked) return true;
         if (evt.EventMeaning == EventMeaning.Mention) return true;
@@ -74,7 +75,7 @@ public sealed class RuleEngine
 
         var attentionPack = packs.FirstOrDefault(p => p.Name.Equals(settings.NeedsAttentionKeywordPackName, StringComparison.OrdinalIgnoreCase));
         if (attentionPack != null &&
-            attentionPack.Keywords.Any(k => evt.MessageText.Contains(k, StringComparison.OrdinalIgnoreCase)))
+            attentionPack.Keywords.Any(k => msg.Contains(k, StringComparison.OrdinalIgnoreCase)))
             return true;
 
         return false;
@@ -90,13 +91,14 @@ public sealed class RuleEngine
 
     private static bool MatchesRule(DevOpsEvent evt, InboxRule rule, IReadOnlyList<KeywordPack> packs)
     {
+        var msg = evt.MessageText ?? string.Empty;
         // Excludes first — any match disqualifies
         if (!string.IsNullOrEmpty(rule.ExcludeAuthorContains) &&
             evt.AuthorCanonicalKey.Contains(rule.ExcludeAuthorContains, StringComparison.OrdinalIgnoreCase))
             return false;
 
         if (!string.IsNullOrEmpty(rule.ExcludeMessageContains) &&
-            evt.MessageText.Contains(rule.ExcludeMessageContains, StringComparison.OrdinalIgnoreCase))
+            msg.Contains(rule.ExcludeMessageContains, StringComparison.OrdinalIgnoreCase))
             return false;
 
         if (!string.IsNullOrEmpty(rule.ExcludeRepositoryEquals) &&
@@ -120,14 +122,14 @@ public sealed class RuleEngine
         if (rule.MessageContainsAny?.Count > 0)
         {
             var keywords = ExpandKeywords(rule.MessageContainsAny, packs);
-            if (!keywords.Any(k => evt.MessageText.Contains(k, StringComparison.OrdinalIgnoreCase)))
+            if (!keywords.Any(k => msg.Contains(k, StringComparison.OrdinalIgnoreCase)))
                 return false;
         }
 
         if (rule.MessageContainsAll?.Count > 0)
         {
             var keywords = ExpandKeywords(rule.MessageContainsAll, packs).ToList();
-            if (keywords.Count == 0 || !keywords.All(k => evt.MessageText.Contains(k, StringComparison.OrdinalIgnoreCase)))
+            if (keywords.Count == 0 || !keywords.All(k => msg.Contains(k, StringComparison.OrdinalIgnoreCase)))
                 return false;
         }
 

@@ -144,3 +144,94 @@ public class PollingLoopBaseTests
         Assert.Equal(1, poller.InitialPollCount);
     }
 }
+
+public class RuleEngineNullMessageTests
+{
+    private readonly RuleEngine _engine = new();
+    private static readonly AppSettings Settings = new() { CurrentUserCanonicalKey = "me@test.com" };
+    private static readonly IReadOnlyList<Watcher> NoWatchers = [];
+    private static readonly IReadOnlyList<KeywordPack> NoPacks = [];
+
+    [Fact]
+    public void AssignInbox_NullMessageText_DoesNotThrow()
+    {
+        var inboxes = new List<InboxDefinition>
+        {
+            new() { Name = "All", IsEnabled = true, IsSystemInbox = false, Order = 1, Rules = [] }
+        };
+        var evt = new DevOpsEvent
+        {
+            EventId = "e1",
+            EventSource = PrEventSource.Human,
+            EventMeaning = EventMeaning.Comment,
+            MessageText = null!,
+            AuthorCanonicalKey = "other@test.com",
+            IsCurrentUserReviewer = true,
+            Status = "active"
+        };
+
+        var ex = Record.Exception(() => _engine.AssignInbox(evt, NoWatchers, inboxes, NoPacks, Settings));
+
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void AssignInbox_NullMessageText_WithKeywordRule_DoesNotThrow()
+    {
+        var inboxes = new List<InboxDefinition>
+        {
+            new()
+            {
+                Name = "Alerts", IsEnabled = true, IsSystemInbox = false, Order = 1,
+                Rules =
+                [
+                    new InboxRule { Enabled = true, MessageContainsAny = ["ALERT"] }
+                ]
+            }
+        };
+        var evt = new DevOpsEvent
+        {
+            EventId = "e2",
+            EventSource = PrEventSource.Human,
+            EventMeaning = EventMeaning.Comment,
+            MessageText = null!,
+            AuthorCanonicalKey = "other@test.com",
+            IsCurrentUserReviewer = false,
+            Status = "active"
+        };
+
+        var ex = Record.Exception(() => _engine.AssignInbox(evt, NoWatchers, inboxes, NoPacks, Settings));
+
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void AssignInbox_NullMessageText_WithExcludeRule_DoesNotThrow()
+    {
+        var inboxes = new List<InboxDefinition>
+        {
+            new()
+            {
+                Name = "Filtered", IsEnabled = true, IsSystemInbox = false, Order = 1,
+                Rules =
+                [
+                    new InboxRule { Enabled = true, ExcludeMessageContains = "noise" }
+                ]
+            }
+        };
+        var evt = new DevOpsEvent
+        {
+            EventId = "e3",
+            EventSource = PrEventSource.Human,
+            EventMeaning = EventMeaning.Comment,
+            MessageText = null!,
+            AuthorCanonicalKey = "other@test.com",
+            IsCurrentUserReviewer = false,
+            Status = "active"
+        };
+
+        var ex = Record.Exception(() => _engine.AssignInbox(evt, NoWatchers, inboxes, NoPacks, Settings));
+
+        Assert.Null(ex);
+    }
+}
