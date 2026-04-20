@@ -123,7 +123,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         var nma = counts.GetValueOrDefault(systemInboxName);
         var text = nma > 0 ? $"DevPulse — {systemInboxName}: {nma}" : "DevPulse — No attention needed";
         if (_trayIcon != null)
-            _trayIcon.Text = text.Length > 63 ? text[..63] : text;
+            _trayIcon.Text = string.Concat(text.EnumerateRunes().Take(63).Select(r => r.ToString()));
     }
 
     private void RebuildMenu(
@@ -152,7 +152,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     }
 
     private void RunBackground(Func<Task> op, string name)
-        => Task.Run(() => op()).ContinueWith(t => Log.Error(t.Exception?.GetBaseException(), "Background op '{Op}' failed", name),
+        => op().ContinueWith(t => Log.Error(t.Exception?.GetBaseException(), "Background op '{Op}' failed", name),
             CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
 
     private void ShowInbox(string name)
