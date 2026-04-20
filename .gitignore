@@ -1,0 +1,23 @@
+## .NET
+bin/
+obj/
+*.user
+.vs/
+*.suo
+*.userprefs
+*.DS_Store
+
+## Logs
+logs/
+*.log
+
+## NuGet
+*.nupkg
+*.snupkg
+packages/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+## Secrets
+*.dpapi
