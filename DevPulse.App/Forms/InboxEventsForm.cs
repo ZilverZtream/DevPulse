@@ -174,12 +174,15 @@ public sealed class InboxEventsForm : Form
 
     private static void OpenWorkItem(DevOpsEvent evt)
     {
-        // Navigate to ADO work item URL derived from org/project
-        var url = evt.PullRequestUrl.Contains("_git")
-            ? evt.PullRequestUrl.Split("_git")[0] + $"_workitems/edit/{evt.LinkedWorkItemId}"
-            : string.Empty;
-        if (!string.IsNullOrEmpty(url))
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+        if (string.IsNullOrEmpty(evt.LinkedWorkItemId)) return;
+        if (!Uri.TryCreate(evt.PullRequestUrl, UriKind.Absolute, out var uri)) return;
+
+        var gitIdx = uri.AbsolutePath.IndexOf("/_git/", StringComparison.Ordinal);
+        if (gitIdx < 0) return;
+
+        var baseUrl = $"{uri.Scheme}://{uri.Host}{uri.AbsolutePath[..gitIdx]}";
+        var url = $"{baseUrl}/_workitems/edit/{evt.LinkedWorkItemId}";
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
     }
 
     private async Task SnoozePrAsync(int prId, TimeSpan duration)
