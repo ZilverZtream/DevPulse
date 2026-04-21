@@ -26,4 +26,14 @@
     <ProjectReference Include="..\DevPulse.App\DevPulse.App.csproj" />
   </ItemGroup>
 
+
+  <ItemGroup>
+    <None Include="Fixtures\FakeCliEcho.cmd">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="Fixtures\FakeCliFail.cmd">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>
