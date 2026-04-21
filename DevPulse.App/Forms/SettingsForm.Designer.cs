@@ -68,10 +68,21 @@ partial class SettingsForm
     // Notifications tab
     private System.Windows.Forms.Label _lblNotificationsNote;
 
-    // Advanced tab labels + controls
-    private System.Windows.Forms.Label _lblMaxEvents;
-    private System.Windows.Forms.NumericUpDown _maxEvents;
+    // Advanced tab controls
     private System.Windows.Forms.Button _btnExport;
+
+    // AI tab
+    private System.Windows.Forms.TabPage _tabAi;
+    private System.Windows.Forms.TextBox _txtAiRoot;
+    private System.Windows.Forms.CheckBox _chkClaudeEnabled;
+    private System.Windows.Forms.TextBox _txtClaudePath;
+    private System.Windows.Forms.Button _btnClaudeDetect;
+    private System.Windows.Forms.CheckBox _chkOpenRouterEnabled;
+    private System.Windows.Forms.TextBox _txtOpenRouterKey;
+    private System.Windows.Forms.TextBox _txtOpenRouterModel;
+    private System.Windows.Forms.ListBox _lstAiTemplates;
+    private System.Windows.Forms.TextBox _txtTemplateHeaders;
+    private System.Windows.Forms.TextBox _txtTemplateBody;
 
     protected override void Dispose(bool disposing)
     {
@@ -147,8 +158,6 @@ partial class SettingsForm
         _lblNotificationsNote = new System.Windows.Forms.Label();
 
         // Advanced controls
-        _lblMaxEvents = new System.Windows.Forms.Label();
-        _maxEvents = new System.Windows.Forms.NumericUpDown();
         _btnExport = new System.Windows.Forms.Button();
 
         SuspendLayout();
@@ -161,7 +170,6 @@ partial class SettingsForm
         ((System.ComponentModel.ISupportInitialize)_columnsGrid).BeginInit();
         ((System.ComponentModel.ISupportInitialize)_prInterval).BeginInit();
         ((System.ComponentModel.ISupportInitialize)_wiInterval).BeginInit();
-        ((System.ComponentModel.ISupportInitialize)_maxEvents).BeginInit();
         ((System.ComponentModel.ISupportInitialize)_splitInboxes).BeginInit();
         _splitInboxes.Panel1.SuspendLayout();
         _splitInboxes.Panel2.SuspendLayout();
@@ -445,18 +453,6 @@ partial class SettingsForm
         _tabNotifications.Controls.Add(_lblNotificationsNote);
 
         // ── Advanced tab ──────────────────────────────────────────────────────
-        _lblMaxEvents.Text = "Max events retained per inbox:";
-        _lblMaxEvents.ForeColor = System.Drawing.Color.FromArgb(180, 180, 200);
-        _lblMaxEvents.AutoSize = true;
-        _lblMaxEvents.Padding = new System.Windows.Forms.Padding(0, 6, 0, 0);
-
-        _maxEvents.Minimum = 10;
-        _maxEvents.Maximum = 1000;
-        _maxEvents.Value = 100;
-        _maxEvents.Dock = System.Windows.Forms.DockStyle.Fill;
-        _maxEvents.BackColor = System.Drawing.Color.FromArgb(42, 42, 62);
-        _maxEvents.ForeColor = System.Drawing.Color.FromArgb(220, 220, 235);
-
         _btnExport.Text = "Export settings JSON\u2026";
         _btnExport.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
         _btnExport.BackColor = System.Drawing.Color.FromArgb(50, 80, 120);
@@ -470,15 +466,122 @@ partial class SettingsForm
         _layoutAdvanced.BackColor = System.Drawing.Color.FromArgb(30, 30, 46);
         _layoutAdvanced.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 220F));
         _layoutAdvanced.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
-        _layoutAdvanced.Controls.Add(_lblMaxEvents, 0, 0);
-        _layoutAdvanced.Controls.Add(_maxEvents, 1, 0);
-        _layoutAdvanced.Controls.Add(new System.Windows.Forms.Label(), 0, 1);
-        _layoutAdvanced.Controls.Add(_btnExport, 1, 1);
+        _layoutAdvanced.Controls.Add(new System.Windows.Forms.Label(), 0, 0);
+        _layoutAdvanced.Controls.Add(_btnExport, 1, 0);
 
         _tabAdvanced.Text = "Advanced";
         _tabAdvanced.BackColor = System.Drawing.Color.FromArgb(30, 30, 46);
         _tabAdvanced.ForeColor = System.Drawing.Color.FromArgb(220, 220, 235);
         _tabAdvanced.Controls.Add(_layoutAdvanced);
+
+        // ── AI tab ────────────────────────────────────────────────────────────
+        _tabAi = new System.Windows.Forms.TabPage();
+        _tabAi.Text = "AI";
+        _tabAi.BackColor = System.Drawing.Color.FromArgb(30, 30, 46);
+        _tabAi.ForeColor = System.Drawing.Color.FromArgb(220, 220, 235);
+
+        var aiLayout = new System.Windows.Forms.TableLayoutPanel
+        {
+            Dock = System.Windows.Forms.DockStyle.Fill,
+            ColumnCount = 2,
+            AutoScroll = true,
+            Padding = new System.Windows.Forms.Padding(12),
+            BackColor = System.Drawing.Color.FromArgb(30, 30, 46)
+        };
+        aiLayout.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 180));
+        aiLayout.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100));
+
+        System.Windows.Forms.Label MakeLabel(string text) => new()
+        {
+            Text = text,
+            AutoSize = true,
+            Padding = new System.Windows.Forms.Padding(0, 6, 0, 0),
+            ForeColor = System.Drawing.Color.FromArgb(180, 180, 200)
+        };
+
+        System.Windows.Forms.TextBox MakeTextBox(bool password = false) => new()
+        {
+            Dock = System.Windows.Forms.DockStyle.Fill,
+            BackColor = System.Drawing.Color.FromArgb(42, 42, 62),
+            ForeColor = System.Drawing.Color.FromArgb(220, 220, 235),
+            UseSystemPasswordChar = password
+        };
+
+        _txtAiRoot = MakeTextBox();
+        aiLayout.Controls.Add(MakeLabel("Output root:"));
+        aiLayout.Controls.Add(_txtAiRoot);
+
+        _chkClaudeEnabled = new System.Windows.Forms.CheckBox
+        {
+            Text = "Claude Code CLI",
+            AutoSize = true,
+            ForeColor = System.Drawing.Color.FromArgb(220, 220, 235)
+        };
+        aiLayout.Controls.Add(MakeLabel(""));
+        aiLayout.Controls.Add(_chkClaudeEnabled);
+
+        _txtClaudePath = MakeTextBox();
+        aiLayout.Controls.Add(MakeLabel("Claude CLI path:"));
+        aiLayout.Controls.Add(_txtClaudePath);
+
+        _btnClaudeDetect = new System.Windows.Forms.Button
+        {
+            Text = "Auto-detect",
+            Width = 110,
+            FlatStyle = System.Windows.Forms.FlatStyle.Flat,
+            BackColor = System.Drawing.Color.FromArgb(50, 80, 120),
+            ForeColor = System.Drawing.Color.White
+        };
+        _btnClaudeDetect.Click += new System.EventHandler(BtnClaudeDetect_Click);
+        aiLayout.Controls.Add(MakeLabel(""));
+        aiLayout.Controls.Add(_btnClaudeDetect);
+
+        _chkOpenRouterEnabled = new System.Windows.Forms.CheckBox
+        {
+            Text = "OpenRouter (HTTP)",
+            AutoSize = true,
+            ForeColor = System.Drawing.Color.FromArgb(220, 220, 235)
+        };
+        aiLayout.Controls.Add(MakeLabel(""));
+        aiLayout.Controls.Add(_chkOpenRouterEnabled);
+
+        _txtOpenRouterKey = MakeTextBox(password: true);
+        aiLayout.Controls.Add(MakeLabel("OpenRouter API key:"));
+        aiLayout.Controls.Add(_txtOpenRouterKey);
+
+        _txtOpenRouterModel = MakeTextBox();
+        aiLayout.Controls.Add(MakeLabel("OpenRouter model:"));
+        aiLayout.Controls.Add(_txtOpenRouterModel);
+
+        _lstAiTemplates = new System.Windows.Forms.ListBox
+        {
+            Height = 80,
+            Dock = System.Windows.Forms.DockStyle.Fill,
+            BackColor = System.Drawing.Color.FromArgb(36, 36, 52),
+            ForeColor = System.Drawing.Color.FromArgb(220, 220, 235)
+        };
+        _lstAiTemplates.SelectedIndexChanged += new System.EventHandler(LstAiTemplates_SelectedIndexChanged);
+        aiLayout.Controls.Add(MakeLabel("Templates:"));
+        aiLayout.Controls.Add(_lstAiTemplates);
+
+        _txtTemplateHeaders = MakeTextBox();
+        aiLayout.Controls.Add(MakeLabel("Required headers:"));
+        aiLayout.Controls.Add(_txtTemplateHeaders);
+
+        _txtTemplateBody = new System.Windows.Forms.TextBox
+        {
+            Multiline = true,
+            Dock = System.Windows.Forms.DockStyle.Fill,
+            Height = 160,
+            ScrollBars = System.Windows.Forms.ScrollBars.Vertical,
+            Font = new System.Drawing.Font("Consolas", 8.5f),
+            BackColor = System.Drawing.Color.FromArgb(42, 42, 62),
+            ForeColor = System.Drawing.Color.FromArgb(220, 220, 235)
+        };
+        aiLayout.Controls.Add(MakeLabel("Template body:"));
+        aiLayout.Controls.Add(_txtTemplateBody);
+
+        _tabAi.Controls.Add(aiLayout);
 
         // ── TabControl ────────────────────────────────────────────────────────
         _tabs.Dock = System.Windows.Forms.DockStyle.Fill;
@@ -492,7 +595,8 @@ partial class SettingsForm
             _tabInboxes,
             _tabBoard,
             _tabNotifications,
-            _tabAdvanced
+            _tabAdvanced,
+            _tabAi
         });
 
         // ── Save button ───────────────────────────────────────────────────────
@@ -531,7 +635,6 @@ partial class SettingsForm
         ((System.ComponentModel.ISupportInitialize)_columnsGrid).EndInit();
         ((System.ComponentModel.ISupportInitialize)_prInterval).EndInit();
         ((System.ComponentModel.ISupportInitialize)_wiInterval).EndInit();
-        ((System.ComponentModel.ISupportInitialize)_maxEvents).EndInit();
         _splitInboxes.Panel1.ResumeLayout(false);
         _splitInboxes.Panel2.ResumeLayout(false);
         ((System.ComponentModel.ISupportInitialize)_splitInboxes).EndInit();

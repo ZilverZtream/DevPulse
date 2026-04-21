@@ -9,6 +9,8 @@ public sealed partial class SettingsForm : Form
 {
     private readonly SettingsService _settings;
     private AppSettings _appSettings = new();
+    private List<DevPulse.Core.Models.AiTemplate> _aiTemplates = [];
+    private int _selectedTemplateIdx = -1;
 
     public SettingsForm(SettingsService settings)
     {
@@ -39,7 +41,6 @@ public sealed partial class SettingsForm : Form
         _poQaGroup.Text = string.Join(", ", _appSettings.PoQaGroupCanonicalKeys);
         _areaPath.Text = _appSettings.AreaPath;
         _iterationPath.Text = _appSettings.IterationPath;
-        _maxEvents.Value = Math.Clamp(_appSettings.MaxEventsPerInbox, (int)_maxEvents.Minimum, (int)_maxEvents.Maximum);
 
         var inboxes = await _settings.GetInboxDefinitionsAsync();
         if (IsDisposed) return;
@@ -58,6 +59,25 @@ public sealed partial class SettingsForm : Form
         _columnsGrid.Rows.Clear();
         foreach (var c in columns.OrderBy(x => x.Order))
             _columnsGrid.Rows.Add(c.Name, string.Join(", ", c.MappedStates), c.AgingDaysWarning, c.AgingDaysStale);
+
+        _txtAiRoot.Text = _appSettings.AiOutputRootPath;
+
+        var profiles = await _settings.GetAiProviderProfilesAsync();
+        if (IsDisposed) return;
+        var claude = profiles.FirstOrDefault(p => p.ProviderId == "claude-cli");
+        _chkClaudeEnabled.Checked = claude?.Enabled ?? false;
+        _txtClaudePath.Text = claude?.ExecutablePath ?? "";
+        var openRouter = profiles.FirstOrDefault(p => p.ProviderId == "openrouter");
+        _chkOpenRouterEnabled.Checked = openRouter?.Enabled ?? false;
+        _txtOpenRouterModel.Text = openRouter?.DefaultModel ?? "anthropic/claude-3.5-sonnet";
+        var keyResult = DevPulse.Infrastructure.Security.SecretStore.TryLoadSecret("openrouter");
+        _txtOpenRouterKey.Text = keyResult.IsOk ? (keyResult.Value ?? "") : "";
+
+        _aiTemplates = (await new DevPulse.App.Services.SettingsAiTemplateStore(_settings).GetTemplatesAsync()).ToList();
+        if (IsDisposed) return;
+        _lstAiTemplates.Items.Clear();
+        foreach (var t in _aiTemplates) _lstAiTemplates.Items.Add(t.Name);
+        if (_lstAiTemplates.Items.Count > 0) _lstAiTemplates.SelectedIndex = 0;
     }
 
     private async Task SaveSettingsAsync()
@@ -86,7 +106,7 @@ public sealed partial class SettingsForm : Form
         _appSettings.PoQaGroupCanonicalKeys = [.. _poQaGroup.Text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
         _appSettings.AreaPath = _areaPath.Text.Trim();
         _appSettings.IterationPath = _iterationPath.Text.Trim();
-        _appSettings.MaxEventsPerInbox = (int)_maxEvents.Value;
+        _appSettings.AiOutputRootPath = _txtAiRoot.Text.Trim();
 
         if (!string.IsNullOrEmpty(_patBox.Text))
             SecretStore.SavePat(_patBox.Text);
@@ -117,6 +137,27 @@ public sealed partial class SettingsForm : Form
             columns.Add(new BoardColumnDefinition { Name = name, Order = order++, MappedStates = states, AgingDaysWarning = warn, AgingDaysStale = stale });
         }
         await _settings.SaveBoardColumnsAsync(columns);
+
+        if (_selectedTemplateIdx >= 0 && _selectedTemplateIdx < _aiTemplates.Count)
+        {
+            _aiTemplates[_selectedTemplateIdx].RequiredHeaders =
+                [.. _txtTemplateHeaders.Text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
+            _aiTemplates[_selectedTemplateIdx].PromptBody = _txtTemplateBody.Text;
+        }
+
+        var aiProfiles = new List<DevPulse.Core.Models.AiProviderProfile>
+        {
+            new() { ProviderId = "claude-cli", Enabled = _chkClaudeEnabled.Checked,
+                    ExecutablePath = _txtClaudePath.Text.Trim(), DefaultModel = "" },
+            new() { ProviderId = "openrouter", Enabled = _chkOpenRouterEnabled.Checked,
+                    ExecutablePath = "", DefaultModel = _txtOpenRouterModel.Text.Trim() }
+        };
+
+        await _settings.SaveAiConfigAsync(aiProfiles, _aiTemplates);
+
+        // Save OpenRouter key via DPAPI AFTER the transactional KV write — if this fails, provider/template config is already safe.
+        if (!string.IsNullOrWhiteSpace(_txtOpenRouterKey.Text))
+            DevPulse.Infrastructure.Security.SecretStore.SaveSecret("openrouter", _txtOpenRouterKey.Text);
 
         MessageBox.Show("Settings saved.", "DevPulse", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
@@ -198,4 +239,37 @@ public sealed partial class SettingsForm : Form
     }
 
     private void BtnExport_Click(object? sender, EventArgs e) => ExportSettings();
+
+    private void LstAiTemplates_SelectedIndexChanged(object? sender, EventArgs e)
+    {
+        if (_selectedTemplateIdx >= 0 && _selectedTemplateIdx < _aiTemplates.Count)
+        {
+            _aiTemplates[_selectedTemplateIdx].RequiredHeaders =
+                [.. _txtTemplateHeaders.Text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
+            _aiTemplates[_selectedTemplateIdx].PromptBody = _txtTemplateBody.Text;
+        }
+        _selectedTemplateIdx = _lstAiTemplates.SelectedIndex;
+        if (_selectedTemplateIdx < 0 || _selectedTemplateIdx >= _aiTemplates.Count) return;
+        var t = _aiTemplates[_selectedTemplateIdx];
+        _txtTemplateHeaders.Text = string.Join(", ", t.RequiredHeaders);
+        _txtTemplateBody.Text = t.PromptBody;
+    }
+
+    private void BtnClaudeDetect_Click(object? sender, EventArgs e)
+    {
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo("where", "claude")
+            { UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true };
+            using var p = System.Diagnostics.Process.Start(psi)!;
+            p.WaitForExit(3000);
+            var first = p.StandardOutput.ReadToEnd().Split('\n').FirstOrDefault()?.Trim();
+            if (!string.IsNullOrWhiteSpace(first)) _txtClaudePath.Text = first;
+            else MessageBox.Show("claude not found on PATH.", "DevPulse", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Detect failed: {ex.Message}", "DevPulse", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
 }
