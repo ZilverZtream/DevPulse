@@ -177,6 +177,27 @@ public sealed class SettingsService
     public async Task SaveWatchersAsync(List<Watcher> watchers, CancellationToken ct = default)
         => await _store.SetSettingAsync("Watchers", JsonSerializer.Serialize(watchers, Json), ct);
 
+    public async Task SaveAiConfigAsync(
+        List<AiProviderProfile> providers,
+        List<AiTemplate> templates,
+        CancellationToken ct = default)
+    {
+        var entries = new List<(string, string)>
+        {
+            ("AiProviderProfiles", JsonSerializer.Serialize(providers, Json)),
+            ("AiTemplates", JsonSerializer.Serialize(templates, Json))
+        };
+        await _store.SetSettingsBatchAsync(entries, ct);
+    }
+
+    public async Task<List<AiProviderProfile>> GetAiProviderProfilesAsync(CancellationToken ct = default)
+    {
+        var json = await _store.GetSettingAsync("AiProviderProfiles", ct);
+        if (string.IsNullOrEmpty(json)) return [];
+        try { return JsonSerializer.Deserialize<List<AiProviderProfile>>(json, Json) ?? []; }
+        catch (JsonException ex) { Log.Warning(ex, "AiProviderProfiles JSON corrupt"); return []; }
+    }
+
     public async Task SeedDefaultsIfNeededAsync(CancellationToken ct = default)
     {
         if (await _store.GetSettingAsync("InboxDefinitions", ct) == null)

@@ -740,6 +740,27 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
         finally { _lock.Release(); }
     }
 
+    public async Task SetSettingsBatchAsync(IReadOnlyList<(string Key, string Value)> entries, CancellationToken ct = default)
+    {
+        if (entries.Count == 0) return;
+        await _lock.WaitAsync(ct);
+        try
+        {
+            await using var tx = await _conn.BeginTransactionAsync(ct);
+            foreach (var (key, value) in entries)
+            {
+                await using var cmd = _conn.CreateCommand();
+                cmd.Transaction = (SqliteTransaction)tx;
+                cmd.CommandText = "INSERT INTO kv_settings VALUES(@k,@v) ON CONFLICT(key) DO UPDATE SET value=excluded.value";
+                cmd.Parameters.AddWithValue("@k", key);
+                cmd.Parameters.AddWithValue("@v", value);
+                await NonQueryRetryAsync(cmd, ct);
+            }
+            await tx.CommitAsync(ct);
+        }
+        finally { _lock.Release(); }
+    }
+
     // ── AI Attempts ───────────────────────────────────────────────────────────
 
     private static readonly Dictionary<AiAttemptStatus, string> AiStatusToString = new()

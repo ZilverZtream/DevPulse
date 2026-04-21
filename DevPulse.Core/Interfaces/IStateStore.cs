@@ -39,6 +39,7 @@ public interface IStateStore
 
     Task<string?> GetSettingAsync(string key, CancellationToken ct = default);
     Task SetSettingAsync(string key, string value, CancellationToken ct = default);
+    Task SetSettingsBatchAsync(IReadOnlyList<(string Key, string Value)> entries, CancellationToken ct = default);
 
     // AI attempts
     Task RecordAiAttemptAsync(AiAttempt attempt, CancellationToken ct = default);
