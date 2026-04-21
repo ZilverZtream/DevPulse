@@ -13,9 +13,11 @@ public sealed class AppSettings
     public string AreaPath { get; set; } = string.Empty;
     public string IterationPath { get; set; } = string.Empty;
     public List<string> SupportedWorkItemTypes { get; set; } = ["Feature", "Bug", "Task", "User Story"];
-    public int MaxEventsPerInbox { get; set; } = 100;
     public int DebugLogRetentionCount { get; set; } = 500;
-    public List<string> BotIdentityPatterns { get; set; } = [];
+    public int DebugWindowDisplayCount { get; set; } = 500;
+    public int PrThreadFetchParallelism { get; set; } = 4;
+    public List<string> BotIdentityPatterns { get; set; } = ["bot", "coderabbit", "[bot]", "automation"];
     public List<string> PoQaGroupCanonicalKeys { get; set; } = [];
     public string NeedsAttentionKeywordPackName { get; set; } = "needs-attention";
+    public string AiOutputRootPath { get; set; } = @"C:\devops";
 }
