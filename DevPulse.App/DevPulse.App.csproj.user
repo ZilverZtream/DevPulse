@@ -1,4 +1,23 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <ItemGroup />
+  <ItemGroup>
+    <Compile Update="Forms\BoardForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="Forms\DebugWindow.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="Forms\InboxEventsForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="Forms\SettingsForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="UI\BoardColumnPanel.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Update="UI\WorkItemCard.cs">
+      <SubType>Component</SubType>
+    </Compile>
+  </ItemGroup>
 </Project>
