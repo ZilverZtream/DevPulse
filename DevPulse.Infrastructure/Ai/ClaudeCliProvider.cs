@@ -67,6 +67,8 @@ public sealed class ClaudeCliProvider : IAiProvider
         catch (OperationCanceledException)
         {
             try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); } catch { }
+            if (ct.IsCancellationRequested)
+                throw; // user / caller cancelled — surface OperationCanceledException
             throw new TimeoutException($"Claude CLI exceeded timeout {req.Timeout.TotalSeconds}s");
         }
 

@@ -52,4 +52,20 @@ public class ClaudeCliProviderTests
         (await act.Should().ThrowAsync<InvalidOperationException>())
             .Which.Message.Should().Contain("exit code 2");
     }
+
+    [Fact]
+    public async Task GenerateAsync_ExternalCancellation_SurfacesAsOperationCanceled()
+    {
+        // Use the echo fixture but cancel before it starts producing output
+        var sut = new ClaudeCliProvider(EchoFixture);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel(); // already cancelled
+
+        var act = () => sut.GenerateAsync(
+            new AiGenerateRequest("x", "m", TimeSpan.FromSeconds(10)),
+            cts.Token);
+
+        // May surface as OperationCanceledException (not TimeoutException) — this is the contract
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
 }
