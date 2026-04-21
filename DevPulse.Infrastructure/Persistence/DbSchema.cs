@@ -1,9 +1,13 @@
 using Microsoft.Data.Sqlite;
+using Serilog;
 
 namespace DevPulse.Infrastructure.Persistence;
 
 public static class DbSchema
 {
+    // Bump this when introducing schema changes that need migration steps.
+    public const int CurrentSchemaVersion = 2;
+
     public static string DbPath =>
         Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -86,6 +90,31 @@ public static class DbSchema
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL DEFAULT ''
             );
+
+            CREATE TABLE IF NOT EXISTS db_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS ai_attempts (
+                id TEXT PRIMARY KEY,
+                work_item_id INTEGER NOT NULL,
+                project TEXT NOT NULL DEFAULT '',
+                template_id TEXT NOT NULL DEFAULT '',
+                provider_id TEXT NOT NULL DEFAULT '',
+                model TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT '',
+                validation_passed INTEGER NOT NULL DEFAULT 0,
+                missing_sections TEXT NOT NULL DEFAULT '',
+                spec_file_path TEXT NOT NULL DEFAULT '',
+                prompt_file_path TEXT NOT NULL DEFAULT '',
+                duration_ms INTEGER NOT NULL DEFAULT 0,
+                tokens_in INTEGER NOT NULL DEFAULT 0,
+                tokens_out INTEGER NOT NULL DEFAULT 0,
+                created_at_utc TEXT NOT NULL DEFAULT '',
+                error_message TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_ai_attempts_wi ON ai_attempts(work_item_id, created_at_utc DESC);
             """;
         await cmd.ExecuteNonQueryAsync();
 
@@ -93,7 +122,8 @@ public static class DbSchema
         foreach (var alter in new[]
         {
             "ALTER TABLE mute_entries ADD COLUMN pr_id INTEGER",
-            "ALTER TABLE mute_entries ADD COLUMN author_key TEXT NOT NULL DEFAULT ''"
+            "ALTER TABLE mute_entries ADD COLUMN author_key TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE work_items ADD COLUMN first_seen_utc TEXT"
         })
         {
             try
@@ -102,7 +132,8 @@ public static class DbSchema
                 m.CommandText = alter;
                 await m.ExecuteNonQueryAsync();
             }
-            catch (SqliteException ex) when (ex.Message.Contains("duplicate column name", StringComparison.OrdinalIgnoreCase)) { }
+            catch (SqliteException ex) when (ex.SqliteErrorCode == 1 &&
+                ex.Message.Contains("duplicate column name", StringComparison.OrdinalIgnoreCase)) { }
         }
 
         // Back-fill typed columns from legacy key column
@@ -112,5 +143,23 @@ public static class DbSchema
             UPDATE mute_entries SET author_key = key WHERE scope = 1 AND (author_key IS NULL OR author_key = '');
             """;
         await backfill.ExecuteNonQueryAsync();
+
+        // Schema version tracking — record current version so future migrations can gate on it.
+        await using var versionRead = conn.CreateCommand();
+        versionRead.CommandText = "SELECT value FROM db_meta WHERE key = 'schema_version'";
+        var existingVersion = await versionRead.ExecuteScalarAsync();
+        var storedVersion = existingVersion is string s && int.TryParse(s, out var v) ? v : 0;
+
+        if (storedVersion < CurrentSchemaVersion)
+        {
+            if (storedVersion > 0)
+                Log.Information("Schema migration: upgrading from version {Old} to {New}", storedVersion, CurrentSchemaVersion);
+            // Future numbered migrations run here between storedVersion and CurrentSchemaVersion.
+            // For now, version 1 == the schema above; no numbered migrations needed.
+            await using var versionWrite = conn.CreateCommand();
+            versionWrite.CommandText = "INSERT INTO db_meta VALUES('schema_version', @v) ON CONFLICT(key) DO UPDATE SET value=excluded.value";
+            versionWrite.Parameters.AddWithValue("@v", CurrentSchemaVersion.ToString());
+            await versionWrite.ExecuteNonQueryAsync();
+        }
     }
 }
