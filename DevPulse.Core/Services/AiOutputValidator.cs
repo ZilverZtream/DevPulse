@@ -10,6 +10,7 @@ public sealed class AiOutputValidator
 
     public AiValidationResult Validate(string markdown, IReadOnlyList<string> requiredHeaders)
     {
+        ArgumentNullException.ThrowIfNull(requiredHeaders);
         var result = new AiValidationResult { IsValid = true };
         if (string.IsNullOrEmpty(markdown))
         {
@@ -25,19 +26,25 @@ public sealed class AiOutputValidator
 
         foreach (var required in requiredHeaders)
         {
-            var match = presentHeaders.FirstOrDefault(p =>
-                p.Name.Equals(required, StringComparison.OrdinalIgnoreCase));
-            if (match == default)
+            var idx = -1;
+            for (int i = 0; i < presentHeaders.Count; i++)
+            {
+                if (presentHeaders[i].Name.Equals(required, StringComparison.OrdinalIgnoreCase))
+                {
+                    idx = i;
+                    break;
+                }
+            }
+            if (idx < 0)
             {
                 result.MissingHeaders.Add(required);
                 result.IsValid = false;
                 continue;
             }
 
-            var thisIdx = presentHeaders.FindIndex(p => p.Index == match.Index);
-            var bodyStart = match.EndIndex;
-            var bodyEnd = thisIdx + 1 < presentHeaders.Count
-                ? presentHeaders[thisIdx + 1].Index
+            var bodyStart = presentHeaders[idx].EndIndex;
+            var bodyEnd = idx + 1 < presentHeaders.Count
+                ? presentHeaders[idx + 1].Index
                 : markdown.Length;
             var body = markdown[bodyStart..bodyEnd];
             if (string.IsNullOrWhiteSpace(body))

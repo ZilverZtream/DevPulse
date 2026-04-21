@@ -116,4 +116,11 @@ public class AiOutputValidatorTests
 
         result.EmptySections.Should().Contain("Context summary");
     }
+
+    [Fact]
+    public void Validate_NullRequiredHeaders_Throws()
+    {
+        var act = () => _sut.Validate("## x\nbody", null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
 }
