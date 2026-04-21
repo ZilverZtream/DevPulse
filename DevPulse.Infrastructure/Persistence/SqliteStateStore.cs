@@ -381,11 +381,11 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
                 INSERT INTO work_items (
                     id, title, item_type, state, board_column, priority,
                     assigned_to_display, assigned_to_canonical, area_path, iteration_path, work_item_url,
-                    linked_pr_id, state_changed_at, days_in_state, aging_level, discovered_at
+                    linked_pr_id, state_changed_at, days_in_state, aging_level, discovered_at, first_seen_utc
                 ) VALUES (
                     @id, @title, @type, @state, @col, @pri,
                     @adisplay, @acanon, @area, @iter, @url,
-                    @linkedpr, @statedt, @days, @aging, @disc
+                    @linkedpr, @statedt, @days, @aging, @disc, @firstseen
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     title=excluded.title, item_type=excluded.item_type, state=excluded.state,
@@ -412,6 +412,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
             cmd.Parameters.AddWithValue("@days", 0);
             cmd.Parameters.AddWithValue("@aging", 0);
             cmd.Parameters.AddWithValue("@disc", string.Empty);
+            cmd.Parameters.AddWithValue("@firstseen", string.Empty);
             foreach (var workItem in items)
             {
                 cmd.Parameters["@id"].Value = workItem.Id;
@@ -430,6 +431,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
                 cmd.Parameters["@days"].Value = workItem.DaysInCurrentState;
                 cmd.Parameters["@aging"].Value = (int)workItem.AgingLevel;
                 cmd.Parameters["@disc"].Value = workItem.DiscoveredAtUtc.ToString("O");
+                cmd.Parameters["@firstseen"].Value = DateTimeOffset.UtcNow.ToString("O");
                 await NonQueryRetryAsync(cmd, ct);
             }
             await tx.CommitAsync(ct);
@@ -447,7 +449,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
                 SELECT id, title, item_type, state, board_column, priority,
                     assigned_to_display, assigned_to_canonical, area_path, iteration_path,
                     work_item_url, linked_pr_id, state_changed_at, days_in_state,
-                    aging_level, discovered_at
+                    aging_level, discovered_at, first_seen_utc
                 FROM work_items
                 """;
             await using var reader = await cmd.ExecuteReaderAsync(ct);
@@ -910,6 +912,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
     {
         var stateChangedAt = ParseStoredDate(r, "state_changed_at") ?? DateTimeOffset.MinValue;
         var ordLinkedPr = r.GetOrdinal("linked_pr_id");
+        var ordFirstSeen = r.GetOrdinal("first_seen_utc");
         var freshDays = stateChangedAt == DateTimeOffset.MinValue
             ? 0
             : Math.Max(0, (int)(DateTimeOffset.UtcNow - stateChangedAt).TotalDays);
@@ -930,7 +933,8 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
             StateChangedAtUtc = stateChangedAt,
             DaysInCurrentState = freshDays,
             AgingLevel = (AgingLevel)r.GetInt32(r.GetOrdinal("aging_level")),
-            DiscoveredAtUtc = ParseStoredDate(r, "discovered_at") ?? DateTimeOffset.MinValue
+            DiscoveredAtUtc = ParseStoredDate(r, "discovered_at") ?? DateTimeOffset.MinValue,
+            FirstSeenUtc = r.IsDBNull(ordFirstSeen) ? null : ParseStoredDate(r, "first_seen_utc")
         };
     }
 

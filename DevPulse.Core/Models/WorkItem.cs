@@ -20,4 +20,5 @@ public sealed class WorkItem
     public int DaysInCurrentState { get; set; }
     public AgingLevel AgingLevel { get; set; }
     public DateTimeOffset DiscoveredAtUtc { get; set; }
+    public DateTimeOffset? FirstSeenUtc { get; set; }
 }
