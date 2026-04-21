@@ -7,7 +7,7 @@ using Serilog;
 
 namespace DevPulse.Infrastructure.Persistence;
 
-public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposable
+public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
 {
     private readonly SqliteConnection _conn;
     private readonly SemaphoreSlim _lock = new(1, 1);
@@ -64,18 +64,46 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
         finally { _lock.Release(); }
     }
 
+    public async Task<HashSet<string>> GetReadEventIdsAsync(IEnumerable<string> eventIds, CancellationToken ct = default)
+    {
+        var ids = eventIds.ToList();
+        if (ids.Count == 0) return [];
+        await _lock.WaitAsync(ct);
+        try
+        {
+            var result = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var chunk in ids.Chunk(500))
+            {
+                await using var cmd = _conn.CreateCommand();
+                var paramNames = chunk.Select((_, i) => $"@p{i}").ToList();
+                cmd.CommandText = $"SELECT event_id FROM events WHERE event_id IN ({string.Join(",", paramNames)}) AND is_read = 1";
+                for (int i = 0; i < chunk.Length; i++)
+                    cmd.Parameters.AddWithValue($"@p{i}", chunk[i]);
+                await using var reader = await cmd.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
+                    result.Add(reader.GetString(reader.GetOrdinal("event_id")));
+            }
+            return result;
+        }
+        finally { _lock.Release(); }
+    }
+
     public async Task SaveEventsAsync(IEnumerable<DevOpsEvent> events, CancellationToken ct = default)
     {
+        var list = events.ToList();
+        if (list.Count == 0) return;
         await _lock.WaitAsync(ct);
         try
         {
             await using var tx = await _conn.BeginTransactionAsync(ct);
             await using var cmd = _conn.CreateCommand();
             cmd.Transaction = (SqliteTransaction)tx;
+            // is_collapsed column is dead (readers derive IsCollapsed from CollapsedCount > 1).
+            // We don't include it here — SQLite uses the schema DEFAULT 0.
             cmd.CommandText = """
                 INSERT OR IGNORE INTO events (
                     event_id, event_type, event_source, event_meaning,
-                    inbox_name, is_collapsed, collapsed_count,
+                    inbox_name, collapsed_count,
                     pull_request_id, pull_request_title, pull_request_url,
                     organization, project, repository,
                     author_display_name, author_canonical_key, message_text, status,
@@ -84,7 +112,7 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
                     is_current_user_reviewer
                 ) VALUES (
                     @eid, @etype, @esrc, @emean,
-                    @inbox, @collapsed, @cnt,
+                    @inbox, @cnt,
                     @prid, @prtitle, @prurl,
                     @org, @proj, @repo,
                     @adisplay, @acanon, @msg, @status,
@@ -98,7 +126,6 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
             cmd.Parameters.AddWithValue("@esrc", 0);
             cmd.Parameters.AddWithValue("@emean", 0);
             cmd.Parameters.AddWithValue("@inbox", string.Empty);
-            cmd.Parameters.AddWithValue("@collapsed", 0);
             cmd.Parameters.AddWithValue("@cnt", 0);
             cmd.Parameters.AddWithValue("@prid", 0);
             cmd.Parameters.AddWithValue("@prtitle", string.Empty);
@@ -119,14 +146,13 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
             cmd.Parameters.AddWithValue("@read", 0);
             cmd.Parameters.AddWithValue("@rule", DBNull.Value);
             cmd.Parameters.AddWithValue("@reviewer", 0);
-            foreach (var e in events)
+            foreach (var e in list)
             {
                 cmd.Parameters["@eid"].Value = e.EventId;
                 cmd.Parameters["@etype"].Value = (int)e.EventType;
                 cmd.Parameters["@esrc"].Value = (int)e.EventSource;
                 cmd.Parameters["@emean"].Value = (int)e.EventMeaning;
                 cmd.Parameters["@inbox"].Value = e.InboxName;
-                cmd.Parameters["@collapsed"].Value = e.CollapsedCount > 1 ? 1 : 0;
                 cmd.Parameters["@cnt"].Value = e.CollapsedCount;
                 cmd.Parameters["@prid"].Value = e.PullRequestId;
                 cmd.Parameters["@prtitle"].Value = e.PullRequestTitle;
@@ -149,6 +175,39 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
                 cmd.Parameters["@reviewer"].Value = e.IsCurrentUserReviewer ? 1 : 0;
                 await NonQueryRetryAsync(cmd, ct);
             }
+
+            // For multi-item collapsed events: carry over prior read state, then delete stale older rows
+            foreach (var e in list.Where(x => x.CollapsedCount > 1))
+            {
+                await using var carryCmd = _conn.CreateCommand();
+                carryCmd.Transaction = (SqliteTransaction)tx;
+                carryCmd.CommandText = """
+                    UPDATE events SET is_read = 1
+                    WHERE event_id = @keep
+                      AND EXISTS (
+                        SELECT 1 FROM events
+                        WHERE pull_request_id = @prId AND event_source = @src
+                          AND collapsed_count > 1 AND event_id != @keep AND is_read = 1
+                      )
+                    """;
+                carryCmd.Parameters.AddWithValue("@keep", e.EventId);
+                carryCmd.Parameters.AddWithValue("@prId", e.PullRequestId);
+                carryCmd.Parameters.AddWithValue("@src", (int)e.EventSource);
+                await NonQueryRetryAsync(carryCmd, ct);
+
+                await using var delCmd = _conn.CreateCommand();
+                delCmd.Transaction = (SqliteTransaction)tx;
+                delCmd.CommandText = """
+                    DELETE FROM events
+                    WHERE pull_request_id = @prId AND event_source = @src
+                      AND collapsed_count > 1 AND event_id != @keep
+                    """;
+                delCmd.Parameters.AddWithValue("@keep", e.EventId);
+                delCmd.Parameters.AddWithValue("@prId", e.PullRequestId);
+                delCmd.Parameters.AddWithValue("@src", (int)e.EventSource);
+                await NonQueryRetryAsync(delCmd, ct);
+            }
+
             await tx.CommitAsync(ct);
         }
         finally { _lock.Release(); }
@@ -162,7 +221,7 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
             await using var cmd = _conn.CreateCommand();
             cmd.CommandText = """
                 SELECT event_id, event_type, event_source, event_meaning,
-                    inbox_name, is_collapsed, collapsed_count,
+                    inbox_name, collapsed_count,
                     pull_request_id, pull_request_title, pull_request_url,
                     organization, project, repository,
                     author_display_name, author_canonical_key, message_text, status,
@@ -192,15 +251,18 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
         await _lock.WaitAsync(ct);
         try
         {
+            await using var tx = await _conn.BeginTransactionAsync(ct);
             foreach (var chunk in ids.Chunk(500))
             {
                 await using var cmd = _conn.CreateCommand();
+                cmd.Transaction = (SqliteTransaction)tx;
                 var paramNames = chunk.Select((_, i) => $"@p{i}").ToList();
                 cmd.CommandText = $"UPDATE events SET is_read = 1 WHERE event_id IN ({string.Join(",", paramNames)})";
                 for (int i = 0; i < chunk.Length; i++)
                     cmd.Parameters.AddWithValue($"@p{i}", chunk[i]);
                 await NonQueryRetryAsync(cmd, ct);
             }
+            await tx.CommitAsync(ct);
         }
         finally { _lock.Release(); }
     }
@@ -212,29 +274,78 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
         await _lock.WaitAsync(ct);
         try
         {
+            await using var tx = await _conn.BeginTransactionAsync(ct);
             foreach (var chunk in ids.Chunk(500))
             {
                 await using var cmd = _conn.CreateCommand();
+                cmd.Transaction = (SqliteTransaction)tx;
                 var paramNames = chunk.Select((_, i) => $"@p{i}").ToList();
                 cmd.CommandText = $"UPDATE events SET notification_sent = 1 WHERE event_id IN ({string.Join(",", paramNames)})";
                 for (int i = 0; i < chunk.Length; i++)
                     cmd.Parameters.AddWithValue($"@p{i}", chunk[i]);
                 await NonQueryRetryAsync(cmd, ct);
             }
+            await tx.CommitAsync(ct);
         }
         finally { _lock.Release(); }
     }
 
-    public async Task RenameInboxAsync(string oldName, string newName, CancellationToken ct = default)
+    public async Task MarkInboxReadAsync(string inboxName, CancellationToken ct = default)
     {
         await _lock.WaitAsync(ct);
         try
         {
             await using var cmd = _conn.CreateCommand();
-            cmd.CommandText = "UPDATE events SET inbox_name = @newName WHERE inbox_name = @oldName";
-            cmd.Parameters.AddWithValue("@newName", newName);
-            cmd.Parameters.AddWithValue("@oldName", oldName);
+            cmd.CommandText = "UPDATE events SET is_read = 1 WHERE inbox_name = @name AND is_read = 0";
+            cmd.Parameters.AddWithValue("@name", inboxName);
             await NonQueryRetryAsync(cmd, ct);
+        }
+        finally { _lock.Release(); }
+    }
+
+    private static readonly JsonSerializerOptions InboxJson = DevPulse.Core.Services.SharedJsonOptions.Settings;
+
+    public async Task ApplyInboxChangesAsync(
+        IReadOnlyList<(string OldName, string NewName)> renames,
+        IReadOnlyList<string> deletions,
+        IReadOnlyList<InboxDefinition> newInboxes,
+        CancellationToken ct = default)
+    {
+        var settingsValue = JsonSerializer.Serialize(newInboxes, InboxJson);
+        await _lock.WaitAsync(ct);
+        try
+        {
+            await using var tx = await _conn.BeginTransactionAsync(ct);
+
+            foreach (var (oldName, newName) in renames)
+            {
+                await using var cmd = _conn.CreateCommand();
+                cmd.Transaction = (SqliteTransaction)tx;
+                cmd.CommandText = "UPDATE events SET inbox_name = @newName WHERE inbox_name = @oldName";
+                cmd.Parameters.AddWithValue("@newName", newName);
+                cmd.Parameters.AddWithValue("@oldName", oldName);
+                await NonQueryRetryAsync(cmd, ct);
+            }
+
+            foreach (var name in deletions)
+            {
+                await using var cmd = _conn.CreateCommand();
+                cmd.Transaction = (SqliteTransaction)tx;
+                cmd.CommandText = "DELETE FROM events WHERE inbox_name = @name";
+                cmd.Parameters.AddWithValue("@name", name);
+                await NonQueryRetryAsync(cmd, ct);
+            }
+
+            await using (var kvCmd = _conn.CreateCommand())
+            {
+                kvCmd.Transaction = (SqliteTransaction)tx;
+                kvCmd.CommandText = "INSERT INTO kv_settings VALUES(@key,@val) ON CONFLICT(key) DO UPDATE SET value=excluded.value";
+                kvCmd.Parameters.AddWithValue("@key", "InboxDefinitions");
+                kvCmd.Parameters.AddWithValue("@val", settingsValue);
+                await NonQueryRetryAsync(kvCmd, ct);
+            }
+
+            await tx.CommitAsync(ct);
         }
         finally { _lock.Release(); }
     }
@@ -245,7 +356,11 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
         try
         {
             await using var cmd = _conn.CreateCommand();
-            cmd.CommandText = "SELECT COUNT(1) FROM events WHERE inbox_name = @inbox AND is_read = 0";
+            cmd.CommandText = """
+                SELECT COALESCE(SUM(CASE WHEN collapsed_count > 1 THEN collapsed_count ELSE 1 END), 0)
+                FROM events
+                WHERE inbox_name = @inbox AND is_read = 0
+                """;
             cmd.Parameters.AddWithValue("@inbox", inboxName);
             return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct));
         }
@@ -414,7 +529,8 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
         try
         {
             await using var cmd = _conn.CreateCommand();
-            cmd.CommandText = "SELECT scope, expires_at, pr_id, author_key FROM mute_entries";
+            cmd.CommandText = "SELECT scope, expires_at, pr_id, author_key FROM mute_entries WHERE expires_at IS NULL OR expires_at > @now";
+            cmd.Parameters.AddWithValue("@now", DateTimeOffset.UtcNow.ToString("O"));
             await using var reader = await cmd.ExecuteReaderAsync(ct);
             var ordScope = reader.GetOrdinal("scope");
             var ordExp = reader.GetOrdinal("expires_at");
@@ -428,9 +544,16 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
                 {
                     var s = reader.GetString(ordExp);
                     if (DateTimeOffset.TryParseExact(s, "O", null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt))
+                    {
                         exp = dt;
+                    }
                     else
-                        Log.Warning("SqliteStateStore: unparseable mute expiry date: {Value}", s);
+                    {
+                        // Skip this entry rather than defaulting to permanent mute — a corrupt
+                        // expiry must not silently promote a time-limited mute to forever.
+                        Log.Warning("SqliteStateStore: unparseable mute expiry '{Value}' — dropping entry", s);
+                        continue;
+                    }
                 }
                 list.Add(new MuteEntry
                 {
@@ -495,6 +618,31 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
         finally { _lock.Release(); }
     }
 
+    public async Task SavePrSnapshotsAsync(IReadOnlyList<(int PrId, string Status, string VotesJson)> snapshots, CancellationToken ct = default)
+    {
+        if (snapshots.Count == 0) return;
+        await _lock.WaitAsync(ct);
+        try
+        {
+            await using var tx = await _conn.BeginTransactionAsync(ct);
+            await using var cmd = _conn.CreateCommand();
+            cmd.Transaction = (SqliteTransaction)tx;
+            cmd.CommandText = "INSERT INTO pr_snapshots VALUES(@id,@status,@votes) ON CONFLICT(pr_id) DO UPDATE SET status=excluded.status, votes_json=excluded.votes_json";
+            cmd.Parameters.AddWithValue("@id", 0);
+            cmd.Parameters.AddWithValue("@status", string.Empty);
+            cmd.Parameters.AddWithValue("@votes", string.Empty);
+            foreach (var (prId, status, votesJson) in snapshots)
+            {
+                cmd.Parameters["@id"].Value = prId;
+                cmd.Parameters["@status"].Value = status;
+                cmd.Parameters["@votes"].Value = votesJson;
+                await NonQueryRetryAsync(cmd, ct);
+            }
+            await tx.CommitAsync(ct);
+        }
+        finally { _lock.Release(); }
+    }
+
     public async Task<Dictionary<int, (string? Status, string? VotesJson)>> GetPrSnapshotsAsync(IEnumerable<int> prIds, CancellationToken ct = default)
     {
         var ids = prIds.ToList();
@@ -522,20 +670,39 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
         finally { _lock.Release(); }
     }
 
-    public async Task CleanStaleSnapshotsAsync(int retainDays = 30, CancellationToken ct = default)
+    public async Task CleanStaleSnapshotsAsync(IReadOnlyList<int> activePrIds, int retainDays = 30, CancellationToken ct = default)
     {
         await _lock.WaitAsync(ct);
         try
         {
             await using var cmd = _conn.CreateCommand();
-            cmd.CommandText = """
-                DELETE FROM pr_snapshots
-                WHERE pr_id NOT IN (
-                    SELECT DISTINCT pull_request_id FROM events
-                    WHERE discovered_at_utc >= @cutoff
-                )
-                """;
-            cmd.Parameters.AddWithValue("@cutoff", DateTimeOffset.UtcNow.AddDays(-retainDays).ToString("O"));
+            if (activePrIds.Count == 0)
+            {
+                // No active PRs known: fall back to date-only cleanup to avoid wiping everything
+                cmd.CommandText = """
+                    DELETE FROM pr_snapshots
+                    WHERE pr_id NOT IN (
+                        SELECT DISTINCT pull_request_id FROM events
+                        WHERE discovered_at_utc >= @cutoff
+                    )
+                    """;
+                cmd.Parameters.AddWithValue("@cutoff", DateTimeOffset.UtcNow.AddDays(-retainDays).ToString("O"));
+            }
+            else
+            {
+                var paramNames = activePrIds.Select((_, i) => $"@a{i}").ToList();
+                cmd.CommandText = $"""
+                    DELETE FROM pr_snapshots
+                    WHERE pr_id NOT IN ({string.Join(",", paramNames)})
+                      AND pr_id NOT IN (
+                        SELECT DISTINCT pull_request_id FROM events
+                        WHERE discovered_at_utc >= @cutoff
+                      )
+                    """;
+                cmd.Parameters.AddWithValue("@cutoff", DateTimeOffset.UtcNow.AddDays(-retainDays).ToString("O"));
+                for (int i = 0; i < activePrIds.Count; i++)
+                    cmd.Parameters.AddWithValue($"@a{i}", activePrIds[i]);
+            }
             await NonQueryRetryAsync(cmd, ct);
         }
         finally { _lock.Release(); }
@@ -571,6 +738,118 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
         finally { _lock.Release(); }
     }
 
+    // ── AI Attempts ───────────────────────────────────────────────────────────
+
+    private static readonly Dictionary<AiAttemptStatus, string> AiStatusToString = new()
+    {
+        [AiAttemptStatus.Success] = "success",
+        [AiAttemptStatus.ValidationFailed] = "validation_failed",
+        [AiAttemptStatus.ProviderError] = "provider_error",
+        [AiAttemptStatus.Timeout] = "timeout",
+    };
+
+    private static readonly Dictionary<string, AiAttemptStatus> StringToAiStatus = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["success"] = AiAttemptStatus.Success,
+        ["validation_failed"] = AiAttemptStatus.ValidationFailed,
+        ["provider_error"] = AiAttemptStatus.ProviderError,
+        ["timeout"] = AiAttemptStatus.Timeout,
+    };
+
+    private static AiAttemptStatus ParseAiStatus(string s)
+    {
+        if (StringToAiStatus.TryGetValue(s, out var v)) return v;
+        Log.Warning("SqliteStateStore: unknown ai_attempts.status '{Status}' — defaulting to ProviderError", s);
+        return AiAttemptStatus.ProviderError;
+    }
+
+    public async Task RecordAiAttemptAsync(AiAttempt attempt, CancellationToken ct = default)
+    {
+        await _lock.WaitAsync(ct);
+        try
+        {
+            await using var cmd = _conn.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO ai_attempts (
+                    id, work_item_id, project, template_id, provider_id, model,
+                    status, validation_passed, missing_sections,
+                    spec_file_path, prompt_file_path,
+                    duration_ms, tokens_in, tokens_out, created_at_utc, error_message
+                ) VALUES (
+                    @id, @wi, @proj, @tpl, @prov, @model,
+                    @status, @valid, @miss,
+                    @spec, @prompt,
+                    @dur, @tin, @tout, @created, @err
+                )
+                """;
+            cmd.Parameters.AddWithValue("@id", attempt.Id);
+            cmd.Parameters.AddWithValue("@wi", attempt.WorkItemId);
+            cmd.Parameters.AddWithValue("@proj", attempt.Project);
+            cmd.Parameters.AddWithValue("@tpl", attempt.TemplateId);
+            cmd.Parameters.AddWithValue("@prov", attempt.ProviderId);
+            cmd.Parameters.AddWithValue("@model", attempt.Model);
+            cmd.Parameters.AddWithValue("@status", AiStatusToString[attempt.Status]);
+            cmd.Parameters.AddWithValue("@valid", attempt.ValidationPassed ? 1 : 0);
+            cmd.Parameters.AddWithValue("@miss", string.Join(",", attempt.MissingSections));
+            cmd.Parameters.AddWithValue("@spec", attempt.SpecFilePath);
+            cmd.Parameters.AddWithValue("@prompt", attempt.PromptFilePath);
+            cmd.Parameters.AddWithValue("@dur", attempt.DurationMs);
+            cmd.Parameters.AddWithValue("@tin", attempt.TokensIn);
+            cmd.Parameters.AddWithValue("@tout", attempt.TokensOut);
+            cmd.Parameters.AddWithValue("@created", attempt.CreatedAtUtc.ToString("O"));
+            cmd.Parameters.AddWithValue("@err", (object?)attempt.ErrorMessage ?? DBNull.Value);
+            await NonQueryRetryAsync(cmd, ct);
+        }
+        finally { _lock.Release(); }
+    }
+
+    public async Task<IReadOnlyList<AiAttempt>> GetAiAttemptsForWorkItemAsync(int workItemId, CancellationToken ct = default)
+    {
+        await _lock.WaitAsync(ct);
+        try
+        {
+            await using var cmd = _conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT id, work_item_id, project, template_id, provider_id, model,
+                    status, validation_passed, missing_sections,
+                    spec_file_path, prompt_file_path,
+                    duration_ms, tokens_in, tokens_out, created_at_utc, error_message
+                FROM ai_attempts
+                WHERE work_item_id = @wi
+                ORDER BY created_at_utc DESC
+                """;
+            cmd.Parameters.AddWithValue("@wi", workItemId);
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            var list = new List<AiAttempt>();
+            while (await reader.ReadAsync(ct))
+            {
+                var ordErr = reader.GetOrdinal("error_message");
+                list.Add(new AiAttempt
+                {
+                    Id = reader.GetString(reader.GetOrdinal("id")),
+                    WorkItemId = reader.GetInt32(reader.GetOrdinal("work_item_id")),
+                    Project = reader.GetString(reader.GetOrdinal("project")),
+                    TemplateId = reader.GetString(reader.GetOrdinal("template_id")),
+                    ProviderId = reader.GetString(reader.GetOrdinal("provider_id")),
+                    Model = reader.GetString(reader.GetOrdinal("model")),
+                    Status = ParseAiStatus(reader.GetString(reader.GetOrdinal("status"))),
+                    ValidationPassed = reader.GetInt32(reader.GetOrdinal("validation_passed")) == 1,
+                    MissingSections = [.. reader.GetString(reader.GetOrdinal("missing_sections"))
+                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)],
+                    SpecFilePath = reader.GetString(reader.GetOrdinal("spec_file_path")),
+                    PromptFilePath = reader.GetString(reader.GetOrdinal("prompt_file_path")),
+                    DurationMs = reader.GetInt32(reader.GetOrdinal("duration_ms")),
+                    TokensIn = reader.GetInt32(reader.GetOrdinal("tokens_in")),
+                    TokensOut = reader.GetInt32(reader.GetOrdinal("tokens_out")),
+                    CreatedAtUtc = ParseStoredDate(reader, "created_at_utc") ?? DateTimeOffset.MinValue,
+                    ErrorMessage = reader.IsDBNull(ordErr) ? null : reader.GetString(ordErr)
+                });
+            }
+            return list;
+        }
+        finally { _lock.Release(); }
+    }
+
     // ── Readers ───────────────────────────────────────────────────────────────
 
     private static DateTimeOffset? ParseStoredDate(SqliteDataReader r, string column)
@@ -584,16 +863,25 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
         return null;
     }
 
+    private static TEnum ParseEnum<TEnum>(int raw, string column, string eventId) where TEnum : struct, Enum
+    {
+        if (Enum.IsDefined(typeof(TEnum), raw)) return (TEnum)(object)raw;
+        Log.Warning("SqliteStateStore: invalid {Enum} value {Raw} for event {EventId} column {Column}; defaulting to 0",
+            typeof(TEnum).Name, raw, eventId, column);
+        return default;
+    }
+
     private static DevOpsEvent ReadEvent(SqliteDataReader r)
     {
         var ordLinkedWi = r.GetOrdinal("linked_work_item_id");
         var ordRuleDesc = r.GetOrdinal("matched_rule_description");
+        var eventId = r.GetString(r.GetOrdinal("event_id"));
         return new DevOpsEvent
         {
-            EventId = r.GetString(r.GetOrdinal("event_id")),
-            EventType = (DevOpsEventType)r.GetInt32(r.GetOrdinal("event_type")),
-            EventSource = (PrEventSource)r.GetInt32(r.GetOrdinal("event_source")),
-            EventMeaning = (EventMeaning)r.GetInt32(r.GetOrdinal("event_meaning")),
+            EventId = eventId,
+            EventType = ParseEnum<DevOpsEventType>(r.GetInt32(r.GetOrdinal("event_type")), "event_type", eventId),
+            EventSource = ParseEnum<PrEventSource>(r.GetInt32(r.GetOrdinal("event_source")), "event_source", eventId),
+            EventMeaning = ParseEnum<EventMeaning>(r.GetInt32(r.GetOrdinal("event_meaning")), "event_meaning", eventId),
             InboxName = r.GetString(r.GetOrdinal("inbox_name")),
             CollapsedCount = r.GetInt32(r.GetOrdinal("collapsed_count")),
             PullRequestId = r.GetInt32(r.GetOrdinal("pull_request_id")),
@@ -622,6 +910,9 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
     {
         var stateChangedAt = ParseStoredDate(r, "state_changed_at") ?? DateTimeOffset.MinValue;
         var ordLinkedPr = r.GetOrdinal("linked_pr_id");
+        var freshDays = stateChangedAt == DateTimeOffset.MinValue
+            ? 0
+            : Math.Max(0, (int)(DateTimeOffset.UtcNow - stateChangedAt).TotalDays);
         return new WorkItem
         {
             Id = r.GetInt32(r.GetOrdinal("id")),
@@ -637,7 +928,7 @@ public sealed class SqliteStateStore : IStateStore, IKvSettings, IAsyncDisposabl
             WorkItemUrl = r.GetString(r.GetOrdinal("work_item_url")),
             LinkedPullRequestId = r.IsDBNull(ordLinkedPr) ? null : r.GetString(ordLinkedPr),
             StateChangedAtUtc = stateChangedAt,
-            DaysInCurrentState = r.GetInt32(r.GetOrdinal("days_in_state")),
+            DaysInCurrentState = freshDays,
             AgingLevel = (AgingLevel)r.GetInt32(r.GetOrdinal("aging_level")),
             DiscoveredAtUtc = ParseStoredDate(r, "discovered_at") ?? DateTimeOffset.MinValue
         };
