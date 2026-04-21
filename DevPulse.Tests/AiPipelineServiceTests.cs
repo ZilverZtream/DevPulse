@@ -72,7 +72,7 @@ public class AiPipelineServiceTests
         var p = new FakeProvider(); var w = new FakeWriter(); var a = new FakeAttemptStore(); var ts = new FakeTemplateStore();
         var sut = Sut(p, w, a, ts);
 
-        var result = await sut.GenerateAsync(workItemId: 1, templateId: "t1", providerId: "fake", ct: default);
+        var result = await sut.GenerateAsync(workItemId: 1, templateId: "t1", providerId: "fake", model: "test-model", ct: default);
 
         result.Status.Should().Be(AiAttemptStatus.Success);
         result.ValidationPassed.Should().BeTrue();
@@ -87,7 +87,7 @@ public class AiPipelineServiceTests
         var w = new FakeWriter(); var a = new FakeAttemptStore(); var ts = new FakeTemplateStore();
         var sut = Sut(p, w, a, ts);
 
-        var result = await sut.GenerateAsync(1, "t1", "fake", default);
+        var result = await sut.GenerateAsync(1, "t1", "fake", "test-model", default);
 
         result.Status.Should().Be(AiAttemptStatus.ProviderError);
         result.ErrorMessage.Should().Contain("boom");
@@ -102,7 +102,7 @@ public class AiPipelineServiceTests
         var w = new FakeWriter(); var a = new FakeAttemptStore(); var ts = new FakeTemplateStore();
         var sut = Sut(p, w, a, ts);
 
-        var result = await sut.GenerateAsync(1, "t1", "fake", default);
+        var result = await sut.GenerateAsync(1, "t1", "fake", "test-model", default);
 
         result.Status.Should().Be(AiAttemptStatus.ValidationFailed);
         result.MissingSections.Should().NotBeEmpty();
@@ -115,7 +115,7 @@ public class AiPipelineServiceTests
         var w = new FakeWriter(); var a = new FakeAttemptStore(); var ts = new FakeTemplateStore();
         var sut = Sut(p, w, a, ts);
 
-        var result = await sut.GenerateAsync(1, "t1", "fake", default);
+        var result = await sut.GenerateAsync(1, "t1", "fake", "test-model", default);
 
         result.Status.Should().Be(AiAttemptStatus.Timeout);
     }
@@ -144,7 +144,7 @@ public class AiPipelineServiceTests
             @"C:\devops", "Proj",
             _ => Task.FromResult<WorkItem?>(Wi()));
 
-        await sut.GenerateAsync(1, "t1", "fake", default);
+        await sut.GenerateAsync(1, "t1", "fake", "test-model", default);
 
         promptWriteOrder.Should().BeLessThan(providerCallOrder);
     }
@@ -162,6 +162,39 @@ public class AiPipelineServiceTests
             if (string.IsNullOrEmpty(spec) && !string.IsNullOrEmpty(prompt))
                 _onPromptOnlyWrite();
             return _inner.WriteAsync(root, slug, id, ts, spec, prompt, history, ct);
+        }
+    }
+
+    [Fact]
+    public async Task GenerateAsync_SecondWriteFails_PreservesValidationStatus()
+    {
+        var p = new FakeProvider();
+        var callCount = 0;
+        var w = new ThrowingSecondWriter(() => { callCount++; if (callCount >= 2) throw new IOException("disk full"); });
+        var a = new FakeAttemptStore();
+        var ts = new FakeTemplateStore();
+        var sut = new AiPipelineService(
+            new[] { (IAiProvider)p }, ts, w, a,
+            @"C:\devops", "Proj",
+            _ => Task.FromResult<WorkItem?>(Wi()));
+
+        var result = await sut.GenerateAsync(1, "t1", "fake", "test-model", default);
+
+        result.Status.Should().Be(AiAttemptStatus.Success);
+        result.ValidationPassed.Should().BeTrue();
+        a.Recorded.Should().ContainSingle();
+        a.Recorded[0].Status.Should().Be(AiAttemptStatus.Success);
+    }
+
+    private sealed class ThrowingSecondWriter : IAiSpecWriter
+    {
+        private readonly Action _maybeThrow;
+        public ThrowingSecondWriter(Action maybeThrow) { _maybeThrow = maybeThrow; }
+        public Task<AiFilePaths> WriteAsync(string root, string slug, int id, DateTimeOffset ts,
+            string spec, string prompt, IReadOnlyList<AiAttempt> history, CancellationToken ct = default)
+        {
+            _maybeThrow();
+            return Task.FromResult(new AiFilePaths("spec.md", "prompt.md", "meta.json"));
         }
     }
 }

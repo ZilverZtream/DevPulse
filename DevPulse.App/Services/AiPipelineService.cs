@@ -37,7 +37,7 @@ public sealed class AiPipelineService
         _loadWorkItem = loadWorkItem;
     }
 
-    public async Task<AiAttempt> GenerateAsync(int workItemId, string templateId, string providerId, CancellationToken ct)
+    public async Task<AiAttempt> GenerateAsync(int workItemId, string templateId, string providerId, string model, CancellationToken ct)
     {
         var attempt = new AiAttempt
         {
@@ -70,7 +70,7 @@ public sealed class AiPipelineService
 
             var sw = Stopwatch.StartNew();
             var result = await provider.GenerateAsync(
-                new AiGenerateRequest(prompt, template.AppliesTo.FirstOrDefault() ?? "", TimeSpan.FromSeconds(90)), ct);
+                new AiGenerateRequest(prompt, model ?? string.Empty, TimeSpan.FromSeconds(90)), ct);
             attempt.DurationMs = (int)sw.ElapsedMilliseconds;
             attempt.Model = result.ModelUsed;
             attempt.TokensIn = result.TokensIn;
@@ -81,11 +81,18 @@ public sealed class AiPipelineService
             attempt.MissingSections = [.. v.MissingHeaders.Concat(v.EmptySections).Distinct()];
             attempt.Status = v.IsValid ? AiAttemptStatus.Success : AiAttemptStatus.ValidationFailed;
 
-            var history = (await _attempts.GetAttemptsForWorkItemAsync(workItemId, ct)).Concat([attempt]).ToList();
-            var paths = await _writer.WriteAsync(_outputRoot, _projectSlug, workItemId, attempt.CreatedAtUtc,
-                specMarkdown: result.Markdown, promptMarkdown: prompt, history, ct);
-            attempt.SpecFilePath = paths.SpecPath;
-            attempt.PromptFilePath = paths.PromptPath;
+            try
+            {
+                var history = (await _attempts.GetAttemptsForWorkItemAsync(workItemId, ct)).Concat([attempt]).ToList();
+                var paths = await _writer.WriteAsync(_outputRoot, _projectSlug, workItemId, attempt.CreatedAtUtc,
+                    specMarkdown: result.Markdown, promptMarkdown: prompt, history, ct);
+                attempt.SpecFilePath = paths.SpecPath;
+                attempt.PromptFilePath = paths.PromptPath;
+            }
+            catch (Exception writerEx) when (writerEx is not OperationCanceledException)
+            {
+                Log.Warning(writerEx, "AiPipelineService: spec writer failed for work item {WorkItemId} — attempt status preserved", workItemId);
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
