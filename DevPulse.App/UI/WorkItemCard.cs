@@ -156,14 +156,44 @@ public sealed class WorkItemCard : Panel
             : name.Length >= 2 ? name[..2].ToUpper() : name.ToUpper();
     }
 
+    public event EventHandler? OnDraftRequested;
+    public event EventHandler? OnViewDraftsRequested;
+    public event EventHandler? OnOpenFolderRequested;
+
     private ContextMenuStrip BuildContextMenu()
     {
         var menu = new ContextMenuStrip();
+
         menu.Items.Add("Open in Azure DevOps", null, (_, _) =>
         {
             if (!string.IsNullOrEmpty(Item.WorkItemUrl))
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Item.WorkItemUrl) { UseShellExecute = true });
         });
+
+        menu.Items.Add(new ToolStripSeparator());
+
+        var draftItem = new ToolStripMenuItem("Draft spec with AI…");
+        draftItem.Click += (_, _) => OnDraftRequested?.Invoke(this, EventArgs.Empty);
+        menu.Items.Add(draftItem);
+
+        var viewItem = new ToolStripMenuItem("View AI drafts…");
+        viewItem.Click += (_, _) => OnViewDraftsRequested?.Invoke(this, EventArgs.Empty);
+        menu.Items.Add(viewItem);
+
+        var folderItem = new ToolStripMenuItem("Open AI output folder");
+        folderItem.Click += (_, _) => OnOpenFolderRequested?.Invoke(this, EventArgs.Empty);
+        menu.Items.Add(folderItem);
+
+        menu.Opening += (_, _) =>
+        {
+            draftItem.Enabled = Item.FirstSeenUtc.HasValue
+                && (Item.State.Equals("New", StringComparison.OrdinalIgnoreCase)
+                    || Item.State.Equals("Proposed", StringComparison.OrdinalIgnoreCase));
+            draftItem.ToolTipText = draftItem.Enabled
+                ? "Draft an AI spec for this New/Proposed item"
+                : "AI drafts are only available for first-seen New/Proposed items";
+        };
+
         return menu;
     }
 }

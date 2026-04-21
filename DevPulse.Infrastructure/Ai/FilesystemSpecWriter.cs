@@ -1,7 +1,7 @@
-using System.Text;
 using System.Text.Json;
 using DevPulse.Core.Interfaces;
 using DevPulse.Core.Models;
+using DevPulse.Core.Services;
 
 namespace DevPulse.Infrastructure.Ai;
 
@@ -26,7 +26,7 @@ public sealed class FilesystemSpecWriter : IAiSpecWriter
         if (projectSlug.Contains(".."))
             throw new ArgumentException("Project slug cannot contain '..' path segments", nameof(projectSlug));
 
-        var slug = Slugify(projectSlug);
+        var slug = Slugify.Project(projectSlug);
         if (string.IsNullOrEmpty(slug))
             throw new ArgumentException("Project slug cannot be empty after slugify", nameof(projectSlug));
 
@@ -50,11 +50,4 @@ public sealed class FilesystemSpecWriter : IAiSpecWriter
         return new AiFilePaths(specPath, promptPath, metaPath);
     }
 
-    internal static string Slugify(string? input)
-    {
-        if (string.IsNullOrWhiteSpace(input)) return string.Empty;
-        var sb = new StringBuilder(input.Length);
-        foreach (var c in input) sb.Append(char.IsLetterOrDigit(c) ? c : '_');
-        return sb.ToString();
-    }
 }

@@ -7,7 +7,7 @@ using Serilog;
 
 namespace DevPulse.Infrastructure.Persistence;
 
-public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
+public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDisposable
 {
     private readonly SqliteConnection _conn;
     private readonly SemaphoreSlim _lock = new(1, 1);
@@ -958,6 +958,12 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable
             FirstSeenUtc = r.IsDBNull(ordFirstSeen) ? null : ParseStoredDate(r, "first_seen_utc")
         };
     }
+
+    Task IAiAttemptStore.RecordAttemptAsync(AiAttempt attempt, CancellationToken ct)
+        => RecordAiAttemptAsync(attempt, ct);
+
+    Task<IReadOnlyList<AiAttempt>> IAiAttemptStore.GetAttemptsForWorkItemAsync(int workItemId, CancellationToken ct)
+        => GetAiAttemptsForWorkItemAsync(workItemId, ct);
 
     public async ValueTask DisposeAsync()
     {

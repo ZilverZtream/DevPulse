@@ -21,6 +21,12 @@ public sealed partial class BoardForm : Form
     private IReadOnlyList<BoardColumnDefinition> _columns = [];
     private DevPulse.Core.Models.AppSettings _appSettings = new();
     private readonly Dictionary<string, BoardColumnPanel> _columnPanels = new();
+    private int _loading;
+    private Label? _emptyStateLabel;
+
+    private AiPipelineService? _aiPipeline;
+    private IReadOnlyList<IAiProvider> _aiProviders = [];
+    private IReadOnlyList<AiTemplate> _aiTemplates = [];
 
     public bool ShowStaleBanner
     {
@@ -38,11 +44,32 @@ public sealed partial class BoardForm : Form
         InitializeComponent();
     }
 
+    public void AttachAi(AiPipelineService pipeline, IEnumerable<IAiProvider> providers, IReadOnlyList<AiTemplate> templates)
+    {
+        _aiPipeline = pipeline;
+        _aiProviders = providers.ToList();
+        _aiTemplates = templates;
+    }
+
     public async Task LoadAsync()
+    {
+        if (Interlocked.CompareExchange(ref _loading, 1, 0) != 0) return;
+        try
+        {
+            await LoadCoreAsync();
+        }
+        finally
+        {
+            Volatile.Write(ref _loading, 0);
+        }
+    }
+
+    private async Task LoadCoreAsync()
     {
         _allItems = await _store.GetWorkItemsAsync();
         _columns = await _settings.GetBoardColumnsAsync();
         _appSettings = await _settings.GetAppSettingsAsync();
+        _boardService.RecomputeAging(_allItems, _columns);
 
         var assignees = _allItems
             .Where(i => !string.IsNullOrEmpty(i.AssignedToDisplayName))
@@ -96,6 +123,39 @@ public sealed partial class BoardForm : Form
     {
         _boardPanel.SuspendLayout();
 
+        // Show empty-state hint when there's nothing to render — distinguishes "nothing to show" from "app broken"
+        var showEmpty = filteredItems.Count == 0;
+        if (showEmpty)
+        {
+            if (_emptyStateLabel == null)
+            {
+                _emptyStateLabel = new Label
+                {
+                    Text = _allItems.Count == 0
+                        ? "No work items found. Check your Area Path in Settings."
+                        : "No work items match the current filters.",
+                    Dock = DockStyle.Fill,
+                    TextAlign = ContentAlignment.MiddleCenter,
+                    ForeColor = Color.FromArgb(180, 180, 200),
+                    BackColor = DarkBg,
+                    Font = new Font("Segoe UI", 11f, FontStyle.Regular)
+                };
+                _boardPanel.Controls.Add(_emptyStateLabel);
+                _emptyStateLabel.BringToFront();
+            }
+            else
+            {
+                _emptyStateLabel.Text = _allItems.Count == 0
+                    ? "No work items found. Check your Area Path in Settings."
+                    : "No work items match the current filters.";
+                _emptyStateLabel.Visible = true;
+            }
+        }
+        else if (_emptyStateLabel != null)
+        {
+            _emptyStateLabel.Visible = false;
+        }
+
         var grouped = _boardService.GroupByColumn(filteredItems, _columns);
         var orderedColumns = _columns.OrderBy(c => c.Order).ToList();
         var activeNames = orderedColumns.Select(c => c.Name).ToHashSet();
@@ -119,7 +179,8 @@ public sealed partial class BoardForm : Form
             {
                 panel = new BoardColumnPanel(col.Name, colIndex)
                 {
-                    Anchor = AnchorStyles.Top | AnchorStyles.Bottom
+                    Anchor = AnchorStyles.Top | AnchorStyles.Bottom,
+                    CardBinder = BindAiHandlersToCard
                 };
                 _columnPanels[col.Name] = panel;
                 _boardPanel.Controls.Add(panel);
@@ -135,6 +196,36 @@ public sealed partial class BoardForm : Form
         }
 
         _boardPanel.ResumeLayout(true);
+    }
+
+    private void BindAiHandlersToCard(WorkItemCard card)
+    {
+        card.OnDraftRequested += (_, _) =>
+        {
+            if (_aiPipeline == null) return;
+            using var dlg = new AiGenerateDialog(_aiPipeline, _aiProviders, _aiTemplates, card.Item);
+            if (dlg.ShowDialog(this) == DialogResult.OK)
+            {
+                var review = new AiReviewForm(
+                    (IAiAttemptStore)_store, _aiPipeline, _aiProviders, _aiTemplates, card.Item);
+                review.Show(this);
+            }
+        };
+        card.OnViewDraftsRequested += (_, _) =>
+        {
+            if (_aiPipeline == null) return;
+            var review = new AiReviewForm(
+                (IAiAttemptStore)_store, _aiPipeline, _aiProviders, _aiTemplates, card.Item);
+            review.Show(this);
+        };
+        card.OnOpenFolderRequested += (_, _) =>
+        {
+            var root = _appSettings.AiOutputRootPath;
+            var slug = Slugify.Project(_appSettings.Project);
+            var folder = System.IO.Path.Combine(root, slug, card.Item.Id.ToString());
+            if (System.IO.Directory.Exists(folder))
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(folder) { UseShellExecute = true });
+        };
     }
 
     private void SearchBox_TextChanged(object? sender, EventArgs e) => ApplyFilters();

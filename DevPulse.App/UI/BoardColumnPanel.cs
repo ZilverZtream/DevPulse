@@ -19,6 +19,7 @@ public sealed class BoardColumnPanel : Panel
     private readonly Label _headerLabel;
 
     public string ColumnName { get; }
+    public Action<WorkItemCard>? CardBinder { get; set; }
 
     public BoardColumnPanel(string columnName, int columnIndex)
     {
@@ -68,6 +69,7 @@ public sealed class BoardColumnPanel : Panel
                 Anchor = AnchorStyles.Left | AnchorStyles.Right,
                 Dimmed = filteredItems != null && !filteredItems.Any(f => f.Id == item.Id)
             };
+            CardBinder?.Invoke(card);
             _cardContainer.Controls.Add(card);
         }
 
