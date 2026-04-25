@@ -54,8 +54,8 @@ public sealed class AzureDevOpsClient : IAzureDevOpsClient
             if (!string.IsNullOrWhiteSpace(_repoFilter))
                 url += $"&searchCriteria.repositoryId={Uri.EscapeDataString(_repoFilter)}";
 
-            using var response = await AdoRetryHelper.GetWithRetryAsync(_http, url, ct);
-            var body = await response.Content.ReadAsStringAsync(ct);
+            using var response = await AdoRetryHelper.GetWithRetryAsync(_http, url, ct).ConfigureAwait(false);
+            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             var result = JsonSerializer.Deserialize<AdoListResponse<AdoPullRequest>>(body, JsonOpts);
             var pageItems = result?.Value;
             if (pageItems == null || pageItems.Count == 0) break;
@@ -80,8 +80,8 @@ public sealed class AzureDevOpsClient : IAzureDevOpsClient
         var url = $"{_orgUrl}/{Uri.EscapeDataString(_project)}/_apis/git/repositories/{Uri.EscapeDataString(repoId)}" +
                   $"/pullrequests/{prId}/threads?api-version={ApiVersions.PullRequestThreads}";
 
-        using var response = await AdoRetryHelper.GetWithRetryAsync(_http, url, ct);
-        var body = await response.Content.ReadAsStringAsync(ct);
+        using var response = await AdoRetryHelper.GetWithRetryAsync(_http, url, ct).ConfigureAwait(false);
+        var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         var result = JsonSerializer.Deserialize<AdoListResponse<AdoThread>>(body, JsonOpts);
         return result?.Value?.Select(MapThread).ToList() ?? [];
     }
@@ -89,8 +89,8 @@ public sealed class AzureDevOpsClient : IAzureDevOpsClient
     public async Task<IdentityRefDto?> GetAuthenticatedUserAsync(CancellationToken ct = default)
     {
         var url = $"{_orgUrl}/_apis/connectionData?api-version={ApiVersions.ConnectionData}";
-        using var response = await AdoRetryHelper.GetWithRetryAsync(_http, url, ct);
-        var body = await response.Content.ReadAsStringAsync(ct);
+        using var response = await AdoRetryHelper.GetWithRetryAsync(_http, url, ct).ConfigureAwait(false);
+        var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         var result = JsonSerializer.Deserialize<AdoConnectionData>(body, JsonOpts);
         var user = result?.AuthenticatedUser;
         if (user == null) return null;

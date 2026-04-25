@@ -116,7 +116,7 @@ public static class DbSchema
             );
             CREATE INDEX IF NOT EXISTS idx_ai_attempts_wi ON ai_attempts(work_item_id, created_at_utc DESC);
             """;
-        await cmd.ExecuteNonQueryAsync();
+        await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
 
         // Inline migration: add typed mute columns (idempotent — silent on duplicate)
         foreach (var alter in new[]
@@ -130,7 +130,7 @@ public static class DbSchema
             {
                 await using var m = conn.CreateCommand();
                 m.CommandText = alter;
-                await m.ExecuteNonQueryAsync();
+                await m.ExecuteNonQueryAsync().ConfigureAwait(false);
             }
             catch (SqliteException ex) when (ex.SqliteErrorCode == 1 &&
                 ex.Message.Contains("duplicate column name", StringComparison.OrdinalIgnoreCase)) { }
@@ -142,12 +142,12 @@ public static class DbSchema
             UPDATE mute_entries SET pr_id = CAST(key AS INTEGER) WHERE scope = 0 AND pr_id IS NULL;
             UPDATE mute_entries SET author_key = key WHERE scope = 1 AND (author_key IS NULL OR author_key = '');
             """;
-        await backfill.ExecuteNonQueryAsync();
+        await backfill.ExecuteNonQueryAsync().ConfigureAwait(false);
 
         // Schema version tracking — record current version so future migrations can gate on it.
         await using var versionRead = conn.CreateCommand();
         versionRead.CommandText = "SELECT value FROM db_meta WHERE key = 'schema_version'";
-        var existingVersion = await versionRead.ExecuteScalarAsync();
+        var existingVersion = await versionRead.ExecuteScalarAsync().ConfigureAwait(false);
         var storedVersion = existingVersion is string s && int.TryParse(s, out var v) ? v : 0;
 
         if (storedVersion < CurrentSchemaVersion)
@@ -164,13 +164,13 @@ public static class DbSchema
                     CREATE INDEX IF NOT EXISTS idx_events_inbox_discovered ON events(inbox_name, discovered_at_utc DESC);
                     CREATE INDEX IF NOT EXISTS idx_events_source_meaning ON events(event_source, event_meaning);
                     """;
-                await v3.ExecuteNonQueryAsync();
+                await v3.ExecuteNonQueryAsync().ConfigureAwait(false);
             }
 
             await using var versionWrite = conn.CreateCommand();
             versionWrite.CommandText = "INSERT INTO db_meta VALUES('schema_version', @v) ON CONFLICT(key) DO UPDATE SET value=excluded.value";
             versionWrite.Parameters.AddWithValue("@v", CurrentSchemaVersion.ToString());
-            await versionWrite.ExecuteNonQueryAsync();
+            await versionWrite.ExecuteNonQueryAsync().ConfigureAwait(false);
         }
     }
 }

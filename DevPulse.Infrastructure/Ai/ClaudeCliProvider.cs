@@ -54,7 +54,7 @@ public sealed class ClaudeCliProvider : IAiProvider
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
 
-        try { await proc.StandardInput.WriteAsync(req.Prompt); }
+        try { await proc.StandardInput.WriteAsync(req.Prompt).ConfigureAwait(false); }
         finally { proc.StandardInput.Close(); }
 
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -62,7 +62,7 @@ public sealed class ClaudeCliProvider : IAiProvider
 
         try
         {
-            await proc.WaitForExitAsync(linkedCts.Token);
+            await proc.WaitForExitAsync(linkedCts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {

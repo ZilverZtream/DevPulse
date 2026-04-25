@@ -521,12 +521,12 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
 
     private static async Task<int> NonQueryRetryAsync(SqliteCommand cmd, CancellationToken ct)
     {
-        try { return await cmd.ExecuteNonQueryAsync(ct); }
+        try { return await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
         catch (SqliteException ex) when (ex.SqliteErrorCode is 5 or 6)
         {
             Log.Warning("SQLite busy (error {Code}); retrying write once", ex.SqliteErrorCode);
             await Task.Delay(50, ct).ConfigureAwait(false);
-            return await cmd.ExecuteNonQueryAsync(ct);
+            return await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }
     }
 

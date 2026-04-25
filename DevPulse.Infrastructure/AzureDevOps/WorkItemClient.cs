@@ -26,9 +26,9 @@ public sealed class WorkItemClient : IWorkItemClient
 
     public async Task<IReadOnlyList<WorkItemDto>> GetWorkItemsAsync(string areaPath, string? iterationPath, CancellationToken ct = default)
     {
-        var ids = await GetIdsViaWiqlAsync(areaPath, iterationPath, ct);
+        var ids = await GetIdsViaWiqlAsync(areaPath, iterationPath, ct).ConfigureAwait(false);
         if (ids.Count == 0) return [];
-        return await FetchBatchAsync(ids, ct);
+        return await FetchBatchAsync(ids, ct).ConfigureAwait(false);
     }
 
     private static string WiqlLiteral(string value) => value.Replace("'", "''");
@@ -60,9 +60,9 @@ public sealed class WorkItemClient : IWorkItemClient
             }
             var url = $"{_orgUrl}/{Uri.EscapeDataString(_project)}/_apis/wit/wiql?$top={pageSize}&$skip={skip}&api-version={ApiVersions.WorkItemQueryLanguage}";
             using var content = new StringContent(serializedBody, Encoding.UTF8, "application/json");
-            using var response = await AdoRetryHelper.PostWithRetryAsync(_http, url, content, ct);
+            using var response = await AdoRetryHelper.PostWithRetryAsync(_http, url, content, ct).ConfigureAwait(false);
 
-            var body = await response.Content.ReadAsStringAsync(ct);
+            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             var result = JsonSerializer.Deserialize<WiqlResult>(body, JsonOpts);
             var page = result?.WorkItems?.Select(w => w.Id).ToList() ?? [];
 
@@ -89,9 +89,9 @@ public sealed class WorkItemClient : IWorkItemClient
         {
             var idList = string.Join(",", chunk);
             var url = $"{_orgUrl}/_apis/wit/workitems?ids={idList}&fields={Fields}&$expand=relations&api-version={ApiVersions.WorkItemsBatch}";
-            using var response = await AdoRetryHelper.GetWithRetryAsync(_http, url, ct);
+            using var response = await AdoRetryHelper.GetWithRetryAsync(_http, url, ct).ConfigureAwait(false);
 
-            var body = await response.Content.ReadAsStringAsync(ct);
+            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             var result = JsonSerializer.Deserialize<AdoListResponse<AdoWorkItem>>(body, JsonOpts);
             if (result?.Value != null)
                 items.AddRange(result.Value.Select(Map));

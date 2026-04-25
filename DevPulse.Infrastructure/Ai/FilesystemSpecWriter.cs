@@ -48,10 +48,10 @@ public sealed class FilesystemSpecWriter : IAiSpecWriter
         var promptPath = Path.Combine(candidate, $"prompt-{tsStamp}.md");
         var metaPath = Path.Combine(candidate, "meta.json");
 
-        await File.WriteAllTextAsync(specPath, specMarkdown, ct);
-        await File.WriteAllTextAsync(promptPath, promptMarkdown, ct);
+        await File.WriteAllTextAsync(specPath, specMarkdown, ct).ConfigureAwait(false);
+        await File.WriteAllTextAsync(promptPath, promptMarkdown, ct).ConfigureAwait(false);
         var metaJson = JsonSerializer.Serialize(attemptHistory, JsonOpts);
-        await File.WriteAllTextAsync(metaPath, metaJson, ct);
+        await File.WriteAllTextAsync(metaPath, metaJson, ct).ConfigureAwait(false);
 
         return new AiFilePaths(specPath, promptPath, metaPath);
     }

@@ -55,8 +55,8 @@ public sealed class OpenRouterProvider : IAiProvider
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         linkedCts.CancelAfter(req.Timeout);
 
-        using var resp = await _http.SendAsync(request, linkedCts.Token);
-        var respBody = await resp.Content.ReadAsStringAsync(linkedCts.Token);
+        using var resp = await _http.SendAsync(request, linkedCts.Token).ConfigureAwait(false);
+        var respBody = await resp.Content.ReadAsStringAsync(linkedCts.Token).ConfigureAwait(false);
         if (!resp.IsSuccessStatusCode)
             throw new HttpRequestException($"OpenRouter HTTP {(int)resp.StatusCode}: {respBody}", null, resp.StatusCode);
 

@@ -29,7 +29,7 @@ internal static class AdoRetryHelper
             {
                 attempt++;
                 last?.Dispose();
-                last = await SendOnceAsync(verb, http, url, content, ct);
+                last = await SendOnceAsync(verb, http, url, content, ct).ConfigureAwait(false);
                 if (last.IsSuccessStatusCode)
                 {
                     var ok = last;
@@ -50,7 +50,7 @@ internal static class AdoRetryHelper
                     var wait = retryAfter + jitter;
                     if (sw.Elapsed + wait > MaxTotalRetryTime)
                         throw new HttpRequestException($"ADO {verb} rate-limited (429) — wall-clock retry cap exceeded: {ep}", null, last.StatusCode);
-                    await Task.Delay(wait, ct);
+                    await Task.Delay(wait, ct).ConfigureAwait(false);
                     // Continue looping on 429 — server told us to wait, we wait, we retry until the
                     // wall-clock cap or until the response is no longer 429.
                     continue;
@@ -60,7 +60,7 @@ internal static class AdoRetryHelper
 
                 var backoff = delay + TimeSpan.FromMilliseconds(Random.Shared.Next(0, 500));
                 if (sw.Elapsed + backoff > MaxTotalRetryTime) break;
-                await Task.Delay(backoff, ct);
+                await Task.Delay(backoff, ct).ConfigureAwait(false);
                 delay *= 2;
             }
             throw new HttpRequestException($"ADO {verb} failed [{(int)last!.StatusCode}]: {ep}", null, last.StatusCode);
