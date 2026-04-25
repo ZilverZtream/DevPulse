@@ -37,6 +37,12 @@ public sealed class FilesystemSpecWriter : IAiSpecWriter
 
         Directory.CreateDirectory(candidate);
 
+        // Defense against symlink/junction smuggling: even if `candidate` lexically lives under
+        // `rootFull`, an attacker (or a careless user) could replace any directory in the chain
+        // with a junction pointing elsewhere. Walk every segment from rootFull leaf-ward and
+        // refuse if any of them is a reparse point.
+        RejectReparsePointsInChain(rootFull, candidate);
+
         var tsStamp = timestampUtc.ToUniversalTime().ToString("yyyyMMddTHHmmssZ");
         var specPath = Path.Combine(candidate, $"spec-{tsStamp}.md");
         var promptPath = Path.Combine(candidate, $"prompt-{tsStamp}.md");
@@ -50,4 +56,30 @@ public sealed class FilesystemSpecWriter : IAiSpecWriter
         return new AiFilePaths(specPath, promptPath, metaPath);
     }
 
+    private static void RejectReparsePointsInChain(string rootFull, string candidate)
+    {
+        // Walk from candidate up to (and including) rootFull; throw if any directory on the
+        // chain has the ReparsePoint attribute. We only check directories that already exist
+        // — Directory.CreateDirectory above ensures the candidate path itself exists.
+        var rootNorm = Path.TrimEndingDirectorySeparator(rootFull);
+        var current = Path.TrimEndingDirectorySeparator(candidate);
+
+        while (!string.IsNullOrEmpty(current))
+        {
+            if (Directory.Exists(current))
+            {
+                var attrs = File.GetAttributes(current);
+                if ((attrs & FileAttributes.ReparsePoint) != 0)
+                    throw new IOException($"Refusing to write through reparse point: {current}");
+            }
+
+            if (string.Equals(current, rootNorm, StringComparison.OrdinalIgnoreCase))
+                break;
+
+            var parent = Path.GetDirectoryName(current);
+            if (string.IsNullOrEmpty(parent) || string.Equals(parent, current, StringComparison.OrdinalIgnoreCase))
+                break;
+            current = parent;
+        }
+    }
 }

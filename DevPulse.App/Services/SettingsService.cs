@@ -46,6 +46,8 @@ public sealed class SettingsService
                 !host.EndsWith(".visualstudio.com", StringComparison.OrdinalIgnoreCase))
                 Log.Warning("OrganizationUrl host '{Host}' is not a recognised ADO Services endpoint; ensure this is intentional (PAT will be sent to this host)", host);
         }
+        if (!string.IsNullOrWhiteSpace(settings.Project))
+            WiqlPathGuard.ValidatePath(settings.Project, nameof(settings.Project));
         if (!string.IsNullOrWhiteSpace(settings.AreaPath))
             WiqlPathGuard.ValidatePath(settings.AreaPath, nameof(settings.AreaPath));
         if (!string.IsNullOrWhiteSpace(settings.IterationPath))

@@ -83,13 +83,20 @@ public static class MarkdownRenderer
         var sb = new StringBuilder(s.Length);
         foreach (var c in s)
         {
+            // Strip control bytes (0..31) other than tab/CR/LF — RTF readers interpret raw control
+            // bytes as commands, so an embedded BEL/NUL/etc could escape our escaping.
+            if (c < 32 && c != '\t' && c != '\r' && c != '\n')
+                continue;
+
             switch (c)
             {
                 case '\\': sb.Append(@"\\"); break;
                 case '{': sb.Append(@"\{"); break;
                 case '}': sb.Append(@"\}"); break;
                 default:
-                    if (c > 127) sb.Append($@"\u{(int)c}?");
+                    // Non-ASCII must be emitted as RTF unicode escapes (\uNNNN?) so the reader
+                    // doesn't reinterpret high bytes. Use signed short per RTF spec.
+                    if (c > 127) sb.Append($@"\u{(short)c}?");
                     else sb.Append(c);
                     break;
             }

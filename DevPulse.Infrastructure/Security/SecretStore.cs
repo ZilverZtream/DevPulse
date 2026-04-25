@@ -1,4 +1,6 @@
+using System.Security.AccessControl;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using System.Text;
 using Serilog;
 
@@ -19,6 +21,43 @@ public static class SecretStore
         var path = GetStoragePath(name);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllBytes(path, encrypted);
+        TryRestrictAclToCurrentUser(path);
+    }
+
+    // Belt-and-braces on top of DPAPI: even though the ciphertext is bound to the current user
+    // and unreadable by other accounts, restricting the file's DACL to the current user blocks
+    // local-admin or other-user processes from copying the blob off-box and means a future change
+    // to a non-DPAPI store wouldn't silently regress to world-readable secrets.
+    private static void TryRestrictAclToCurrentUser(string path)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        try
+        {
+            using var identity = WindowsIdentity.GetCurrent();
+            var owner = identity.User;
+            if (owner is null) return;
+
+            var info = new FileInfo(path);
+            var security = info.GetAccessControl();
+            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+
+            // Strip any rules carried over from the parent's inheritance.
+            foreach (FileSystemAccessRule existing in security.GetAccessRules(true, false, typeof(SecurityIdentifier)))
+                security.RemoveAccessRule(existing);
+
+            security.AddAccessRule(new FileSystemAccessRule(
+                owner,
+                FileSystemRights.FullControl,
+                AccessControlType.Allow));
+
+            info.SetAccessControl(security);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
+        {
+            // ACL hardening is defense-in-depth on top of DPAPI; if the platform refuses
+            // (e.g., FAT32 volume, AV lock), log and leave the file at whatever ACL it inherited.
+            Log.Warning(ex, "SecretStore: failed to tighten DACL on {Path}", path);
+        }
     }
 
     public static PatLoadResult TryLoadSecret(string name)
