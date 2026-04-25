@@ -86,9 +86,26 @@ public abstract class PollingLoopBase : IDisposable, IAsyncDisposable
 
     public void Dispose()
     {
-        // Keep the sync wait short — this Dispose path runs on the UI thread during
-        // WinForms Application.Exit. TrayApplicationContext orchestrates async cleanup
-        // via Application.ApplicationExit; this is only a backstop.
-        DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(2));
+        // Sync backstop only — TrayApplicationContext orchestrates async cleanup via
+        // Application.ApplicationExit. Cancel here so the loop tears down on its own;
+        // never wait on a UI-thread sync context (deadlock risk). For tests / rare
+        // sync-only callers, offload the await to the thread-pool with a short bound.
+        try { _cts.Cancel(); } catch (ObjectDisposedException) { }
+        if (_loopTask != null)
+        {
+            try { Task.Run(() => DisposeAsync().AsTask()).Wait(TimeSpan.FromSeconds(2)); }
+            catch (AggregateException) { }
+            catch (ObjectDisposedException) { }
+        }
+        else
+        {
+            // No loop ever started — safe to dispose primitives synchronously.
+            if (Interlocked.CompareExchange(ref _disposed, 1, 0) == 0)
+            {
+                try { _cts.Dispose(); } catch (ObjectDisposedException) { }
+                try { _runLock.Dispose(); } catch (ObjectDisposedException) { }
+            }
+        }
+        GC.SuppressFinalize(this);
     }
 }

@@ -23,19 +23,20 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
         pragma.ExecuteNonQuery();
     }
 
-    public async Task InitializeAsync() => await DbSchema.EnsureCreatedAsync(_conn);
+    public async Task InitializeAsync() => await DbSchema.EnsureCreatedAsync(_conn).ConfigureAwait(false);
 
     // ── Events ────────────────────────────────────────────────────────────────
 
     public async Task<bool> EventExistsAsync(string eventId, CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             await using var cmd = _conn.CreateCommand();
             cmd.CommandText = "SELECT COUNT(1) FROM events WHERE event_id = @id";
             cmd.Parameters.AddWithValue("@id", eventId);
-            return Convert.ToInt64(await cmd.ExecuteScalarAsync(ct)) > 0;
+            return Convert.ToInt64(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false)) > 0;
         }
         finally { _lock.Release(); }
     }
@@ -48,7 +49,8 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
     {
         var ids = candidateIds.ToList();
         if (ids.Count == 0) return [];
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             var result = new HashSet<string>(StringComparer.Ordinal);
@@ -59,8 +61,8 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
                 cmd.CommandText = $"SELECT event_id FROM events WHERE event_id IN ({string.Join(",", paramNames)})";
                 for (int i = 0; i < chunk.Length; i++)
                     cmd.Parameters.AddWithValue($"@p{i}", chunk[i]);
-                await using var reader = await cmd.ExecuteReaderAsync(ct);
-                while (await reader.ReadAsync(ct))
+                await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
                     result.Add(reader.GetString(reader.GetOrdinal("event_id")));
             }
             return result;
@@ -72,7 +74,8 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
     {
         var ids = eventIds.ToList();
         if (ids.Count == 0) return [];
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             var result = new HashSet<string>(StringComparer.Ordinal);
@@ -83,8 +86,8 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
                 cmd.CommandText = $"SELECT event_id FROM events WHERE event_id IN ({string.Join(",", paramNames)}) AND is_read = 1";
                 for (int i = 0; i < chunk.Length; i++)
                     cmd.Parameters.AddWithValue($"@p{i}", chunk[i]);
-                await using var reader = await cmd.ExecuteReaderAsync(ct);
-                while (await reader.ReadAsync(ct))
+                await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
                     result.Add(reader.GetString(reader.GetOrdinal("event_id")));
             }
             return result;
@@ -96,10 +99,11 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
     {
         var list = events.ToList();
         if (list.Count == 0) return;
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            await using var tx = await _conn.BeginTransactionAsync(ct);
+            await using var tx = await _conn.BeginTransactionAsync(ct).ConfigureAwait(false);
             await using var cmd = _conn.CreateCommand();
             cmd.Transaction = (SqliteTransaction)tx;
             // is_collapsed column is dead (readers derive IsCollapsed from CollapsedCount > 1).
@@ -177,7 +181,7 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
                 cmd.Parameters["@read"].Value = e.IsRead ? 1 : 0;
                 cmd.Parameters["@rule"].Value = (object?)e.MatchedRuleDescription ?? DBNull.Value;
                 cmd.Parameters["@reviewer"].Value = e.IsCurrentUserReviewer ? 1 : 0;
-                await NonQueryRetryAsync(cmd, ct);
+                await NonQueryRetryAsync(cmd, ct).ConfigureAwait(false);
             }
 
             // For multi-item collapsed events: carry over prior read state, then delete stale older rows
@@ -197,7 +201,7 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
                 carryCmd.Parameters.AddWithValue("@keep", e.EventId);
                 carryCmd.Parameters.AddWithValue("@prId", e.PullRequestId);
                 carryCmd.Parameters.AddWithValue("@src", (int)e.EventSource);
-                await NonQueryRetryAsync(carryCmd, ct);
+                await NonQueryRetryAsync(carryCmd, ct).ConfigureAwait(false);
 
                 await using var delCmd = _conn.CreateCommand();
                 delCmd.Transaction = (SqliteTransaction)tx;
@@ -209,17 +213,18 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
                 delCmd.Parameters.AddWithValue("@keep", e.EventId);
                 delCmd.Parameters.AddWithValue("@prId", e.PullRequestId);
                 delCmd.Parameters.AddWithValue("@src", (int)e.EventSource);
-                await NonQueryRetryAsync(delCmd, ct);
+                await NonQueryRetryAsync(delCmd, ct).ConfigureAwait(false);
             }
 
-            await tx.CommitAsync(ct);
+            await tx.CommitAsync(ct).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
 
     public async Task<IReadOnlyList<DevOpsEvent>> GetLatestEventsForInboxAsync(string inboxName, int maxCount, CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             await using var cmd = _conn.CreateCommand();
@@ -239,9 +244,9 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
                 """;
             cmd.Parameters.AddWithValue("@inbox", inboxName);
             cmd.Parameters.AddWithValue("@max", maxCount);
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             var list = new List<DevOpsEvent>();
-            while (await reader.ReadAsync(ct))
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
                 list.Add(ReadEvent(reader));
             return list;
         }
@@ -252,10 +257,11 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
     {
         var ids = eventIds.ToList();
         if (ids.Count == 0) return;
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            await using var tx = await _conn.BeginTransactionAsync(ct);
+            await using var tx = await _conn.BeginTransactionAsync(ct).ConfigureAwait(false);
             foreach (var chunk in ids.Chunk(InClauseChunkSize))
             {
                 await using var cmd = _conn.CreateCommand();
@@ -264,9 +270,9 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
                 cmd.CommandText = $"UPDATE events SET is_read = 1 WHERE event_id IN ({string.Join(",", paramNames)})";
                 for (int i = 0; i < chunk.Length; i++)
                     cmd.Parameters.AddWithValue($"@p{i}", chunk[i]);
-                await NonQueryRetryAsync(cmd, ct);
+                await NonQueryRetryAsync(cmd, ct).ConfigureAwait(false);
             }
-            await tx.CommitAsync(ct);
+            await tx.CommitAsync(ct).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
@@ -275,10 +281,11 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
     {
         var ids = eventIds.ToList();
         if (ids.Count == 0) return;
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            await using var tx = await _conn.BeginTransactionAsync(ct);
+            await using var tx = await _conn.BeginTransactionAsync(ct).ConfigureAwait(false);
             foreach (var chunk in ids.Chunk(InClauseChunkSize))
             {
                 await using var cmd = _conn.CreateCommand();
@@ -287,22 +294,23 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
                 cmd.CommandText = $"UPDATE events SET notification_sent = 1 WHERE event_id IN ({string.Join(",", paramNames)})";
                 for (int i = 0; i < chunk.Length; i++)
                     cmd.Parameters.AddWithValue($"@p{i}", chunk[i]);
-                await NonQueryRetryAsync(cmd, ct);
+                await NonQueryRetryAsync(cmd, ct).ConfigureAwait(false);
             }
-            await tx.CommitAsync(ct);
+            await tx.CommitAsync(ct).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
 
     public async Task MarkInboxReadAsync(string inboxName, CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             await using var cmd = _conn.CreateCommand();
             cmd.CommandText = "UPDATE events SET is_read = 1 WHERE inbox_name = @name AND is_read = 0";
             cmd.Parameters.AddWithValue("@name", inboxName);
-            await NonQueryRetryAsync(cmd, ct);
+            await NonQueryRetryAsync(cmd, ct).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
@@ -316,10 +324,11 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
         CancellationToken ct = default)
     {
         var settingsValue = JsonSerializer.Serialize(newInboxes, InboxJson);
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            await using var tx = await _conn.BeginTransactionAsync(ct);
+            await using var tx = await _conn.BeginTransactionAsync(ct).ConfigureAwait(false);
 
             foreach (var (oldName, newName) in renames)
             {
@@ -328,7 +337,7 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
                 cmd.CommandText = "UPDATE events SET inbox_name = @newName WHERE inbox_name = @oldName";
                 cmd.Parameters.AddWithValue("@newName", newName);
                 cmd.Parameters.AddWithValue("@oldName", oldName);
-                await NonQueryRetryAsync(cmd, ct);
+                await NonQueryRetryAsync(cmd, ct).ConfigureAwait(false);
             }
 
             foreach (var name in deletions)
@@ -337,7 +346,7 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
                 cmd.Transaction = (SqliteTransaction)tx;
                 cmd.CommandText = "DELETE FROM events WHERE inbox_name = @name";
                 cmd.Parameters.AddWithValue("@name", name);
-                await NonQueryRetryAsync(cmd, ct);
+                await NonQueryRetryAsync(cmd, ct).ConfigureAwait(false);
             }
 
             await using (var kvCmd = _conn.CreateCommand())
@@ -346,17 +355,18 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
                 kvCmd.CommandText = "INSERT INTO kv_settings VALUES(@key,@val) ON CONFLICT(key) DO UPDATE SET value=excluded.value";
                 kvCmd.Parameters.AddWithValue("@key", "InboxDefinitions");
                 kvCmd.Parameters.AddWithValue("@val", settingsValue);
-                await NonQueryRetryAsync(kvCmd, ct);
+                await NonQueryRetryAsync(kvCmd, ct).ConfigureAwait(false);
             }
 
-            await tx.CommitAsync(ct);
+            await tx.CommitAsync(ct).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
 
     public async Task<int> GetUnreadCountForInboxAsync(string inboxName, CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             await using var cmd = _conn.CreateCommand();
@@ -366,7 +376,7 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
                 WHERE inbox_name = @inbox AND is_read = 0
                 """;
             cmd.Parameters.AddWithValue("@inbox", inboxName);
-            return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct));
+            return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false));
         }
         finally { _lock.Release(); }
     }
@@ -375,10 +385,11 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
 
     public async Task UpsertWorkItemsAsync(IEnumerable<WorkItem> items, CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            await using var tx = await _conn.BeginTransactionAsync(ct);
+            await using var tx = await _conn.BeginTransactionAsync(ct).ConfigureAwait(false);
             await using var cmd = _conn.CreateCommand();
             cmd.Transaction = (SqliteTransaction)tx;
             cmd.CommandText = """
@@ -436,16 +447,17 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
                 cmd.Parameters["@aging"].Value = (int)workItem.AgingLevel;
                 cmd.Parameters["@disc"].Value = workItem.DiscoveredAtUtc.ToString("O");
                 cmd.Parameters["@firstseen"].Value = DateTimeOffset.UtcNow.ToString("O");
-                await NonQueryRetryAsync(cmd, ct);
+                await NonQueryRetryAsync(cmd, ct).ConfigureAwait(false);
             }
-            await tx.CommitAsync(ct);
+            await tx.CommitAsync(ct).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
 
     public async Task<IReadOnlyList<WorkItem>> GetWorkItemsAsync(CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             await using var cmd = _conn.CreateCommand();
@@ -456,9 +468,9 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
                     aging_level, discovered_at, first_seen_utc
                 FROM work_items
                 """;
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             var list = new List<WorkItem>();
-            while (await reader.ReadAsync(ct))
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
                 list.Add(ReadWorkItem(reader));
             return list;
         }
@@ -469,7 +481,8 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
 
     public async Task SaveMuteEntryAsync(MuteEntry entry, CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             await using var cmd = _conn.CreateCommand();
@@ -486,21 +499,22 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
             cmd.Parameters.AddWithValue("@exp", (object?)entry.ExpiresAtUtc?.ToString("O") ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@prid", (object?)entry.PrId ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@akey", entry.AuthorKey);
-            await NonQueryRetryAsync(cmd, ct);
+            await NonQueryRetryAsync(cmd, ct).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
 
     public async Task RemoveMuteEntryAsync(MuteEntry entry, CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             await using var cmd = _conn.CreateCommand();
             cmd.CommandText = "DELETE FROM mute_entries WHERE scope = @scope AND key = @key";
             cmd.Parameters.AddWithValue("@scope", (int)entry.Scope);
             cmd.Parameters.AddWithValue("@key", entry.DbKey);
-            await NonQueryRetryAsync(cmd, ct);
+            await NonQueryRetryAsync(cmd, ct).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
@@ -511,39 +525,41 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
         catch (SqliteException ex) when (ex.SqliteErrorCode is 5 or 6)
         {
             Log.Warning("SQLite busy (error {Code}); retrying write once", ex.SqliteErrorCode);
-            await Task.Delay(50, ct);
+            await Task.Delay(50, ct).ConfigureAwait(false);
             return await cmd.ExecuteNonQueryAsync(ct);
         }
     }
 
     public async Task PurgeExpiredMutesAsync(CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             await using var cmd = _conn.CreateCommand();
             cmd.CommandText = "DELETE FROM mute_entries WHERE expires_at IS NOT NULL AND expires_at <= @now";
             cmd.Parameters.AddWithValue("@now", DateTimeOffset.UtcNow.ToString("O"));
-            await NonQueryRetryAsync(cmd, ct);
+            await NonQueryRetryAsync(cmd, ct).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
 
     public async Task<IReadOnlyList<MuteEntry>> GetActiveMutesAsync(CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             await using var cmd = _conn.CreateCommand();
             cmd.CommandText = "SELECT scope, expires_at, pr_id, author_key FROM mute_entries WHERE expires_at IS NULL OR expires_at > @now";
             cmd.Parameters.AddWithValue("@now", DateTimeOffset.UtcNow.ToString("O"));
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             var ordScope = reader.GetOrdinal("scope");
             var ordExp = reader.GetOrdinal("expires_at");
             var ordPrId = reader.GetOrdinal("pr_id");
             var ordAuthorKey = reader.GetOrdinal("author_key");
             var list = new List<MuteEntry>();
-            while (await reader.ReadAsync(ct))
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
             {
                 DateTimeOffset? exp = null;
                 if (!reader.IsDBNull(ordExp))
@@ -578,13 +594,14 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
 
     public async Task<DateTimeOffset?> GetLastSuccessfulPollAsync(string track, CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             await using var cmd = _conn.CreateCommand();
             cmd.CommandText = "SELECT last_success FROM poll_state WHERE track = @track";
             cmd.Parameters.AddWithValue("@track", track);
-            var val = await cmd.ExecuteScalarAsync(ct);
+            var val = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
             if (val == null || val == DBNull.Value) return null;
             var s = (string)val;
             return DateTimeOffset.TryParseExact(s, "O", null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt)
@@ -595,14 +612,15 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
 
     public async Task SetLastSuccessfulPollAsync(string track, DateTimeOffset ts, CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             await using var cmd = _conn.CreateCommand();
             cmd.CommandText = "INSERT INTO poll_state VALUES(@track, @ts) ON CONFLICT(track) DO UPDATE SET last_success=excluded.last_success";
             cmd.Parameters.AddWithValue("@track", track);
             cmd.Parameters.AddWithValue("@ts", ts.ToString("O"));
-            await NonQueryRetryAsync(cmd, ct);
+            await NonQueryRetryAsync(cmd, ct).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
@@ -611,7 +629,8 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
 
     public async Task SavePrSnapshotAsync(int prId, string status, string votesJson, CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             await using var cmd = _conn.CreateCommand();
@@ -619,7 +638,7 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
             cmd.Parameters.AddWithValue("@id", prId);
             cmd.Parameters.AddWithValue("@status", status);
             cmd.Parameters.AddWithValue("@votes", votesJson);
-            await NonQueryRetryAsync(cmd, ct);
+            await NonQueryRetryAsync(cmd, ct).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
@@ -627,10 +646,11 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
     public async Task SavePrSnapshotsAsync(IReadOnlyList<(int PrId, string Status, string VotesJson)> snapshots, CancellationToken ct = default)
     {
         if (snapshots.Count == 0) return;
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            await using var tx = await _conn.BeginTransactionAsync(ct);
+            await using var tx = await _conn.BeginTransactionAsync(ct).ConfigureAwait(false);
             await using var cmd = _conn.CreateCommand();
             cmd.Transaction = (SqliteTransaction)tx;
             cmd.CommandText = "INSERT INTO pr_snapshots VALUES(@id,@status,@votes) ON CONFLICT(pr_id) DO UPDATE SET status=excluded.status, votes_json=excluded.votes_json";
@@ -642,9 +662,9 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
                 cmd.Parameters["@id"].Value = prId;
                 cmd.Parameters["@status"].Value = status;
                 cmd.Parameters["@votes"].Value = votesJson;
-                await NonQueryRetryAsync(cmd, ct);
+                await NonQueryRetryAsync(cmd, ct).ConfigureAwait(false);
             }
-            await tx.CommitAsync(ct);
+            await tx.CommitAsync(ct).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
@@ -653,7 +673,8 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
     {
         var ids = prIds.ToList();
         if (ids.Count == 0) return [];
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             var result = new Dictionary<int, (string?, string?)>();
@@ -664,11 +685,11 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
                 cmd.CommandText = $"SELECT pr_id, status, votes_json FROM pr_snapshots WHERE pr_id IN ({string.Join(",", paramNames)})";
                 for (int i = 0; i < chunk.Length; i++)
                     cmd.Parameters.AddWithValue($"@p{i}", chunk[i]);
-                await using var reader = await cmd.ExecuteReaderAsync(ct);
+                await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
                 var ordPrId = reader.GetOrdinal("pr_id");
                 var ordStatus = reader.GetOrdinal("status");
                 var ordVotes = reader.GetOrdinal("votes_json");
-                while (await reader.ReadAsync(ct))
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
                     result[reader.GetInt32(ordPrId)] = (reader.GetString(ordStatus), reader.GetString(ordVotes));
             }
             return result;
@@ -678,7 +699,8 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
 
     public async Task CleanStaleSnapshotsAsync(IReadOnlyList<int> activePrIds, int retainDays = 30, CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             await using var cmd = _conn.CreateCommand();
@@ -709,7 +731,7 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
                 for (int i = 0; i < activePrIds.Count; i++)
                     cmd.Parameters.AddWithValue($"@a{i}", activePrIds[i]);
             }
-            await NonQueryRetryAsync(cmd, ct);
+            await NonQueryRetryAsync(cmd, ct).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
@@ -718,13 +740,14 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
 
     public async Task<string?> GetSettingAsync(string key, CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             await using var cmd = _conn.CreateCommand();
             cmd.CommandText = "SELECT value FROM kv_settings WHERE key = @key";
             cmd.Parameters.AddWithValue("@key", key);
-            var val = await cmd.ExecuteScalarAsync(ct);
+            var val = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
             return val == null || val == DBNull.Value ? null : val.ToString();
         }
         finally { _lock.Release(); }
@@ -732,14 +755,15 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
 
     public async Task SetSettingAsync(string key, string value, CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             await using var cmd = _conn.CreateCommand();
             cmd.CommandText = "INSERT INTO kv_settings VALUES(@key,@val) ON CONFLICT(key) DO UPDATE SET value=excluded.value";
             cmd.Parameters.AddWithValue("@key", key);
             cmd.Parameters.AddWithValue("@val", value);
-            await NonQueryRetryAsync(cmd, ct);
+            await NonQueryRetryAsync(cmd, ct).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
@@ -747,10 +771,11 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
     public async Task SetSettingsBatchAsync(IReadOnlyList<(string Key, string Value)> entries, CancellationToken ct = default)
     {
         if (entries.Count == 0) return;
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            await using var tx = await _conn.BeginTransactionAsync(ct);
+            await using var tx = await _conn.BeginTransactionAsync(ct).ConfigureAwait(false);
             foreach (var (key, value) in entries)
             {
                 await using var cmd = _conn.CreateCommand();
@@ -758,9 +783,9 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
                 cmd.CommandText = "INSERT INTO kv_settings VALUES(@k,@v) ON CONFLICT(key) DO UPDATE SET value=excluded.value";
                 cmd.Parameters.AddWithValue("@k", key);
                 cmd.Parameters.AddWithValue("@v", value);
-                await NonQueryRetryAsync(cmd, ct);
+                await NonQueryRetryAsync(cmd, ct).ConfigureAwait(false);
             }
-            await tx.CommitAsync(ct);
+            await tx.CommitAsync(ct).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
@@ -792,7 +817,8 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
 
     public async Task RecordAiAttemptAsync(AiAttempt attempt, CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             await using var cmd = _conn.CreateCommand();
@@ -825,14 +851,15 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
             cmd.Parameters.AddWithValue("@tout", attempt.TokensOut);
             cmd.Parameters.AddWithValue("@created", attempt.CreatedAtUtc.ToString("O"));
             cmd.Parameters.AddWithValue("@err", (object?)attempt.ErrorMessage ?? DBNull.Value);
-            await NonQueryRetryAsync(cmd, ct);
+            await NonQueryRetryAsync(cmd, ct).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
 
     public async Task<IReadOnlyList<AiAttempt>> GetAiAttemptsForWorkItemAsync(int workItemId, CancellationToken ct = default)
     {
-        await _lock.WaitAsync(ct);
+        ThrowIfDisposed();
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             await using var cmd = _conn.CreateCommand();
@@ -846,9 +873,9 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
                 ORDER BY created_at_utc DESC
                 """;
             cmd.Parameters.AddWithValue("@wi", workItemId);
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             var list = new List<AiAttempt>();
-            while (await reader.ReadAsync(ct))
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
             {
                 var ordErr = reader.GetOrdinal("error_message");
                 list.Add(new AiAttempt
@@ -969,10 +996,18 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
     Task<IReadOnlyList<AiAttempt>> IAiAttemptStore.GetAttemptsForWorkItemAsync(int workItemId, CancellationToken ct)
         => GetAiAttemptsForWorkItemAsync(workItemId, ct);
 
+    private void ThrowIfDisposed()
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            throw new ObjectDisposedException(nameof(SqliteStateStore));
+    }
+
     public async ValueTask DisposeAsync()
     {
-        if (Interlocked.CompareExchange(ref _disposed, 1, 0) != 0) return;
-        await _conn.CloseAsync();
+        // Set the flag BEFORE disposing the semaphore so callers about to enter
+        // WaitAsync observe disposal and throw ObjectDisposedException cleanly.
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        await _conn.CloseAsync().ConfigureAwait(false);
         _conn.Dispose();
         _lock.Dispose();
     }

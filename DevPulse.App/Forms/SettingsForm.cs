@@ -16,6 +16,9 @@ public sealed partial class SettingsForm : Form
     {
         _settings = settings;
         InitializeComponent();
+        // Show a loading placeholder while DPAPI unwrap runs off the UI thread.
+        _patBox.Text = string.Empty;
+        _patBox.Enabled = false;
         _ = LoadSettingsAsync().ContinueWith(
             t => Serilog.Log.Error(t.Exception?.GetBaseException(), "SettingsForm: LoadSettings failed"),
             System.Threading.CancellationToken.None,
@@ -33,7 +36,11 @@ public sealed partial class SettingsForm : Form
         _project.Text = _appSettings.Project;
         _repoFilter.Text = _appSettings.RepositoryFilter;
         _currentUser.Text = _appSettings.CurrentUserCanonicalKey;
-        _patBox.Text = SecretStore.LoadPat() ?? string.Empty;
+        // DPAPI unwrap can briefly block; offload so the SettingsForm stays responsive while opening.
+        var pat = await Task.Run(() => SecretStore.LoadPat() ?? string.Empty);
+        if (IsDisposed) return;
+        _patBox.Text = pat;
+        _patBox.Enabled = true;
         _prInterval.Value = Math.Clamp(_appSettings.PrPollingIntervalMinutes, (int)_prInterval.Minimum, (int)_prInterval.Maximum);
         _wiInterval.Value = Math.Clamp(_appSettings.WorkItemPollingIntervalMinutes, (int)_wiInterval.Minimum, (int)_wiInterval.Maximum);
         _refreshOnStartup.Checked = _appSettings.RefreshOnStartup;

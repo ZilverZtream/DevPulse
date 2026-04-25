@@ -1,5 +1,6 @@
 using DevPulse.App.Services;
 using DevPulse.Core.Services;
+using Serilog;
 
 namespace DevPulse.App.Forms;
 
@@ -23,10 +24,18 @@ public sealed partial class DebugWindow : Form
         _tabs.TabPages.Add(BuildRuleTracesTab());
         _tabs.TabPages.Add(BuildIdentityLogTab());
         _tabs.TabPages.Add(BuildMuteLogTab());
-        RefreshAll();
+        _ = RefreshAllAsync().ContinueWith(
+            t => Log.Warning(t.Exception?.GetBaseException(), "DebugWindow initial refresh failed"),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted,
+            TaskScheduler.Default);
     }
 
-    private void BtnRefresh_Click(object? sender, EventArgs e) => RefreshAll();
+    private async void BtnRefresh_Click(object? sender, EventArgs e)
+    {
+        try { await RefreshAllAsync(); }
+        catch (Exception ex) { Log.Warning(ex, "DebugWindow refresh failed"); }
+    }
 
     private TabPage BuildPollStatusTab()
     {
@@ -101,20 +110,30 @@ public sealed partial class DebugWindow : Form
         return grid;
     }
 
-    public void RefreshAll()
+    public async Task RefreshAllAsync()
     {
-        if (InvokeRequired) { Invoke(RefreshAll); return; }
+        // Read settings off the UI thread, then marshal back for the grid mutations.
+        var appSettings = await _settings.GetAppSettingsAsync().ConfigureAwait(false);
+        if (IsDisposed) return;
 
+        if (InvokeRequired)
+        {
+            try { Invoke(() => RefreshAllUi(appSettings)); }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { /* form closing */ }
+            return;
+        }
+
+        RefreshAllUi(appSettings);
+    }
+
+    private void RefreshAllUi(DevPulse.Core.Models.AppSettings appSettings)
+    {
         var events = _debugLog.GetRecentEvents();
         var pollStatus = _debugLog.GetPollStatus();
 
-        // Pull display count from settings (cached per refresh) — configurable for future tiers.
-        var settingsTask = _settings.GetAppSettingsAsync();
-        if (settingsTask.IsCompletedSuccessfully)
-        {
-            _displayCount = Math.Max(10, settingsTask.Result.DebugWindowDisplayCount);
-            _errorDisplayCount = Math.Min(_displayCount, 100);
-        }
+        _displayCount = Math.Max(10, appSettings.DebugWindowDisplayCount);
+        _errorDisplayCount = Math.Min(_displayCount, 100);
 
         // Poll status tab
         var pollGrid = FindGrid(_tabs.TabPages[0], "poll");
