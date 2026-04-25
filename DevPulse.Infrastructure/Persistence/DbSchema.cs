@@ -6,7 +6,7 @@ namespace DevPulse.Infrastructure.Persistence;
 public static class DbSchema
 {
     // Bump this when introducing schema changes that need migration steps.
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     public static string DbPath =>
         Path.Combine(
@@ -154,8 +154,19 @@ public static class DbSchema
         {
             if (storedVersion > 0)
                 Log.Information("Schema migration: upgrading from version {Old} to {New}", storedVersion, CurrentSchemaVersion);
-            // Future numbered migrations run here between storedVersion and CurrentSchemaVersion.
-            // For now, version 1 == the schema above; no numbered migrations needed.
+
+            if (storedVersion < 3)
+            {
+                // v3: composite indexes for inbox listing (already covered by idx_events_inbox above,
+                // but recreated here for explicit ordering) and event source/meaning slicing.
+                await using var v3 = conn.CreateCommand();
+                v3.CommandText = """
+                    CREATE INDEX IF NOT EXISTS idx_events_inbox_discovered ON events(inbox_name, discovered_at_utc DESC);
+                    CREATE INDEX IF NOT EXISTS idx_events_source_meaning ON events(event_source, event_meaning);
+                    """;
+                await v3.ExecuteNonQueryAsync();
+            }
+
             await using var versionWrite = conn.CreateCommand();
             versionWrite.CommandText = "INSERT INTO db_meta VALUES('schema_version', @v) ON CONFLICT(key) DO UPDATE SET value=excluded.value";
             versionWrite.Parameters.AddWithValue("@v", CurrentSchemaVersion.ToString());

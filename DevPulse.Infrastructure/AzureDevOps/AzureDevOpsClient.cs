@@ -13,6 +13,18 @@ public sealed class AzureDevOpsClient : IAzureDevOpsClient
     private readonly string _project;
     private readonly string _repoFilter;
 
+    /// <summary>
+    /// True if the most recent <see cref="GetRelevantPullRequestsAsync"/> call hit the page-count
+    /// hard cap (PRs may have been truncated). Read by callers that want to surface this to the
+    /// user — the warning is also logged at Warning level. Reset on every call.
+    /// </summary>
+    public bool LastFetchTruncated { get; private set; }
+
+    /// <summary>
+    /// Total truncation events observed since process start. Useful for diagnostics dashboards.
+    /// </summary>
+    public int TruncationCount { get; private set; }
+
     private static readonly JsonSerializerOptions JsonOpts = SharedJsonOptions.AdoResponse;
 
     public AzureDevOpsClient(HttpClient http, string orgUrl, string project, string repoFilter)
@@ -29,6 +41,9 @@ public sealed class AzureDevOpsClient : IAzureDevOpsClient
         const int maxPages = 5;
         var allPrs = new List<PullRequestDto>();
         bool reachedHardCap = false;
+
+        // Reset per-call flag so consumers can poll it after each fetch.
+        LastFetchTruncated = false;
 
         for (int page = 0; page < maxPages; page++)
         {
@@ -51,7 +66,11 @@ public sealed class AzureDevOpsClient : IAzureDevOpsClient
         }
 
         if (reachedHardCap)
-            Log.Warning("PR fetch reached the {Cap}-item hard cap; some PRs may have been skipped. Configure a repository filter to reduce scope.", pageSize * maxPages);
+        {
+            LastFetchTruncated = true;
+            TruncationCount++;
+            Log.Warning("PR fetch reached the {Cap}-item hard cap; some PRs may have been skipped. Configure a repository filter to reduce scope. (truncation #{Count})", pageSize * maxPages, TruncationCount);
+        }
 
         return allPrs;
     }

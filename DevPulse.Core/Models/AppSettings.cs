@@ -20,5 +20,13 @@ public sealed class AppSettings
     public List<string> BotIdentityPatterns { get; set; } = ["bot", "coderabbit", "[bot]", "automation"];
     public List<string> PoQaGroupCanonicalKeys { get; set; } = [];
     public string NeedsAttentionKeywordPackName { get; set; } = "needs-attention";
-    public string AiOutputRootPath { get; set; } = @"C:\devops";
+    public string AiOutputRootPath { get; set; } = DefaultAiOutputRootPath();
+
+    // Computed lazily so the resolved path tracks the actual user profile at first-run, not at
+    // assembly load. Using SpecialFolder.UserProfile + "Documents" keeps the default reasonable on
+    // localized Windows installs (Documents folder name doesn't matter — we anchor under profile).
+    public static string DefaultAiOutputRootPath() =>
+        System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            "Documents", "DevPulse", "specs");
 }

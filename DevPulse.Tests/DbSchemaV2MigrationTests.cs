@@ -37,7 +37,7 @@ public class DbSchemaV2MigrationTests : IDisposable
     }
 
     [Fact]
-    public async Task EnsureCreatedAsync_SetsSchemaVersionTo2()
+    public async Task EnsureCreatedAsync_SetsSchemaVersionToCurrent()
     {
         using var conn = new SqliteConnection($"Data Source={_dbPath}");
         conn.Open();
@@ -46,7 +46,7 @@ public class DbSchemaV2MigrationTests : IDisposable
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT value FROM db_meta WHERE key='schema_version'";
         var v = (string?)await cmd.ExecuteScalarAsync();
-        v.Should().Be("2");
+        v.Should().Be(DbSchema.CurrentSchemaVersion.ToString());
     }
 
     [Fact]

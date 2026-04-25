@@ -1,6 +1,5 @@
 using DevPulse.Core.Enums;
 using DevPulse.Core.Models;
-using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using Serilog;
 
@@ -183,8 +182,12 @@ public sealed class RuleEngine
         }
     }
 
-    private const int MaxGlobCacheSize = 256;
-    private static readonly ConcurrentDictionary<string, Regex> GlobCache = new();
+    // RuleEngine is invoked from a single poll thread in production; LRU access is guarded by
+    // _globCacheLock so concurrent callers (e.g. tests, future parallel evaluation) stay correct.
+    internal const int MaxGlobCacheSize = 256;
+    private static readonly object _globCacheLock = new();
+    private static readonly LinkedList<KeyValuePair<string, Regex>> _globLru = new();
+    private static readonly Dictionary<string, LinkedListNode<KeyValuePair<string, Regex>>> _globIndex = new(StringComparer.Ordinal);
 
     private static Regex CompileGlob(string pattern) =>
         new("^" + Regex.Escape(pattern).Replace(@"\*", ".*").Replace(@"\?", ".") + "$",
@@ -192,14 +195,65 @@ public sealed class RuleEngine
 
     private static bool MatchesGlob(string text, string pattern)
     {
-        if (GlobCache.TryGetValue(pattern, out var cached))
-            return cached.IsMatch(text);
-
-        var regex = CompileGlob(pattern);
-        if (GlobCache.Count < MaxGlobCacheSize)
-            GlobCache.TryAdd(pattern, regex);
+        var regex = GetOrAddGlob(pattern);
         return regex.IsMatch(text);
     }
+
+    private static Regex GetOrAddGlob(string pattern)
+    {
+        lock (_globCacheLock)
+        {
+            if (_globIndex.TryGetValue(pattern, out var node))
+            {
+                // Hit: move to head (most-recently-used).
+                _globLru.Remove(node);
+                _globLru.AddFirst(node);
+                return node.Value.Value;
+            }
+        }
+
+        // Compile outside the lock — Regex compilation can be expensive and we don't want to
+        // serialize compilation work across threads.
+        var regex = CompileGlob(pattern);
+
+        lock (_globCacheLock)
+        {
+            // Re-check after compile in case another thread added it concurrently.
+            if (_globIndex.TryGetValue(pattern, out var existing))
+            {
+                _globLru.Remove(existing);
+                _globLru.AddFirst(existing);
+                return existing.Value.Value;
+            }
+            if (_globIndex.Count >= MaxGlobCacheSize)
+            {
+                // Evict tail (least-recently-used).
+                var tail = _globLru.Last;
+                if (tail != null)
+                {
+                    _globLru.RemoveLast();
+                    _globIndex.Remove(tail.Value.Key);
+                }
+            }
+            var newNode = new LinkedListNode<KeyValuePair<string, Regex>>(new KeyValuePair<string, Regex>(pattern, regex));
+            _globLru.AddFirst(newNode);
+            _globIndex[pattern] = newNode;
+            return regex;
+        }
+    }
+
+    // Test-only accessors — internal so DevPulse.Tests can verify LRU semantics without exposing
+    // mutable state to production callers.
+    internal static int GlobCacheCount { get { lock (_globCacheLock) return _globIndex.Count; } }
+    internal static IReadOnlyList<string> GlobCacheKeysMruFirst()
+    {
+        lock (_globCacheLock) return _globLru.Select(kv => kv.Key).ToList();
+    }
+    internal static void ClearGlobCache()
+    {
+        lock (_globCacheLock) { _globLru.Clear(); _globIndex.Clear(); }
+    }
+    internal static bool MatchesGlobForTesting(string text, string pattern) => MatchesGlob(text, pattern);
 
     private static string BuildRuleDescription(InboxRule rule)
     {

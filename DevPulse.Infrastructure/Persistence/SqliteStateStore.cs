@@ -40,6 +40,10 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
         finally { _lock.Release(); }
     }
 
+    // SQLite default SQLITE_LIMIT_VARIABLE_NUMBER is 999 (999 in 3.32+, 250000 hard ceiling). 900
+    // leaves head-room for any wrapper params and avoids brushing the limit on bespoke builds.
+    private const int InClauseChunkSize = 900;
+
     public async Task<HashSet<string>> GetExistingEventIdsAsync(IEnumerable<string> candidateIds, CancellationToken ct = default)
     {
         var ids = candidateIds.ToList();
@@ -48,7 +52,7 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
         try
         {
             var result = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var chunk in ids.Chunk(500))
+            foreach (var chunk in ids.Chunk(InClauseChunkSize))
             {
                 await using var cmd = _conn.CreateCommand();
                 var paramNames = chunk.Select((_, i) => $"@p{i}").ToList();
@@ -72,7 +76,7 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
         try
         {
             var result = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var chunk in ids.Chunk(500))
+            foreach (var chunk in ids.Chunk(InClauseChunkSize))
             {
                 await using var cmd = _conn.CreateCommand();
                 var paramNames = chunk.Select((_, i) => $"@p{i}").ToList();
@@ -252,7 +256,7 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
         try
         {
             await using var tx = await _conn.BeginTransactionAsync(ct);
-            foreach (var chunk in ids.Chunk(500))
+            foreach (var chunk in ids.Chunk(InClauseChunkSize))
             {
                 await using var cmd = _conn.CreateCommand();
                 cmd.Transaction = (SqliteTransaction)tx;
@@ -275,7 +279,7 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
         try
         {
             await using var tx = await _conn.BeginTransactionAsync(ct);
-            foreach (var chunk in ids.Chunk(500))
+            foreach (var chunk in ids.Chunk(InClauseChunkSize))
             {
                 await using var cmd = _conn.CreateCommand();
                 cmd.Transaction = (SqliteTransaction)tx;
@@ -653,7 +657,7 @@ public sealed class SqliteStateStore : IStateStore, IAiAttemptStore, IAsyncDispo
         try
         {
             var result = new Dictionary<int, (string?, string?)>();
-            foreach (var chunk in ids.Chunk(500))
+            foreach (var chunk in ids.Chunk(InClauseChunkSize))
             {
                 await using var cmd = _conn.CreateCommand();
                 var paramNames = chunk.Select((_, i) => $"@p{i}").ToList();

@@ -14,4 +14,7 @@
   <ItemGroup>
     <ProjectReference Include="..\DevPulse.Core\DevPulse.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="DevPulse.Tests" />
+  </ItemGroup>
 </Project>
