@@ -8,7 +8,6 @@ partial class InboxEventsForm
     private System.Windows.Forms.FlowLayoutPanel _toolbarFlow;
     private System.Windows.Forms.Button _btnMarkAll;
     private System.Windows.Forms.Button _btnRefresh;
-    private System.Windows.Forms.ListView _listView;
 
     protected override void Dispose(bool disposing)
     {
@@ -24,7 +23,6 @@ partial class InboxEventsForm
         _toolbarFlow = new System.Windows.Forms.FlowLayoutPanel();
         _btnMarkAll = new System.Windows.Forms.Button();
         _btnRefresh = new System.Windows.Forms.Button();
-        _listView = new System.Windows.Forms.ListView();
         _toolbar.SuspendLayout();
         _toolbarFlow.SuspendLayout();
         SuspendLayout();
@@ -70,25 +68,6 @@ partial class InboxEventsForm
         _toolbar.BackColor = System.Drawing.Color.FromArgb(42, 42, 60);
         _toolbar.Controls.Add(_toolbarFlow);
         //
-        // _listView
-        //
-        _listView.Dock = System.Windows.Forms.DockStyle.Fill;
-        _listView.View = System.Windows.Forms.View.Details;
-        _listView.FullRowSelect = true;
-        _listView.GridLines = false;
-        _listView.BackColor = System.Drawing.Color.FromArgb(30, 30, 46);
-        _listView.ForeColor = System.Drawing.Color.FromArgb(224, 224, 240);
-        _listView.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point);
-        _listView.BorderStyle = System.Windows.Forms.BorderStyle.None;
-        _listView.Columns.Add("", 24);
-        _listView.Columns.Add("PR", 60);
-        _listView.Columns.Add("Title", 240);
-        _listView.Columns.Add("Author", 160);
-        _listView.Columns.Add("Summary", 220);
-        _listView.Columns.Add("Time", 110);
-        _listView.MouseDoubleClick += new System.Windows.Forms.MouseEventHandler(OnDoubleClick);
-        _listView.MouseClick += new System.Windows.Forms.MouseEventHandler(OnRightClick);
-        //
         // InboxEventsForm
         //
         ClientSize = new System.Drawing.Size(820, 570);
@@ -97,7 +76,8 @@ partial class InboxEventsForm
         StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
         Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point);
         Text = "DevPulse — Inbox";
-        Controls.Add(_listView);
+        BuildList();
+        Controls.Add(_list);
         Controls.Add(_toolbar);
         _toolbarFlow.ResumeLayout(false);
         _toolbarFlow.PerformLayout();

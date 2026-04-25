@@ -1,4 +1,6 @@
 using DevPulse.App;
+using DevPulse.App.UI;
+using DevPulse.Core.Enums;
 using DevPulse.Core.Models;
 using DevPulse.Core.Services;
 using DevPulse.App.Services;
@@ -9,17 +11,14 @@ namespace DevPulse.App.Forms;
 
 public sealed partial class InboxEventsForm : Form
 {
-    private static readonly Color DarkBg = Color.FromArgb(30, 30, 46);
-    private static readonly Color CardBg = Color.FromArgb(50, 50, 74);
-    private static readonly Color TextPrimary = Color.FromArgb(224, 224, 240);
-    private static readonly Color TextSecondary = Color.FromArgb(144, 144, 176);
-
     private readonly InboxViewService _viewService;
     private readonly IStateStore _store;
     private readonly SettingsService _settings;
     private readonly string _inboxName;
     private readonly BoardForm? _boardForm;
     private readonly CancellationTokenSource _formCts = new();
+
+    private SortableListView<DevOpsEvent> _list = null!;
 
     private int _loading;
 
@@ -39,6 +38,97 @@ public sealed partial class InboxEventsForm : Form
         InitializeComponent();
         Text = $"DevPulse — {_inboxName}";
         LoadEventsAsync().FireAndForget(nameof(LoadEventsAsync));
+    }
+
+    // Called from Designer's InitializeComponent. The control is generic so the Designer cannot
+    // wire it up declaratively — keep its construction here next to the column definitions.
+    private void BuildList()
+    {
+        _list = new SortableListView<DevOpsEvent>
+        {
+            Dock = DockStyle.Fill,
+            EmptyStateText = "(no unread events)",
+        };
+
+        _list.SetColumns(new[]
+        {
+            new SortableListColumn<DevOpsEvent>
+            {
+                Name = "PR",
+                Width = 70,
+                Alignment = ColumnAlignment.Right,
+                ValueSelector = e => e.PullRequestId,
+                DisplaySelector = e => $"#{e.PullRequestId}",
+            },
+            new SortableListColumn<DevOpsEvent>
+            {
+                Name = "Source",
+                Width = 70,
+                ValueSelector = e => e.EventSource.ToString(),
+                DisplaySelector = e => FormatSource(e.EventSource),
+            },
+            new SortableListColumn<DevOpsEvent>
+            {
+                Name = "Meaning",
+                Width = 110,
+                ValueSelector = e => e.EventMeaning.ToString(),
+                DisplaySelector = e => FormatMeaning(e),
+            },
+            new SortableListColumn<DevOpsEvent>
+            {
+                Name = "Title",
+                Width = 280,
+                IsStretch = true,
+                ValueSelector = e => e.PullRequestTitle,
+            },
+            new SortableListColumn<DevOpsEvent>
+            {
+                Name = "Author",
+                Width = 160,
+                ValueSelector = e => e.AuthorDisplayName,
+            },
+            new SortableListColumn<DevOpsEvent>
+            {
+                Name = "Time",
+                Width = 110,
+                Alignment = ColumnAlignment.Right,
+                ValueSelector = e => e.DiscoveredAtUtc,
+                DisplaySelector = e => e.DiscoveredAtUtc.ToLocalTime().ToString("MM/dd HH:mm"),
+            },
+        });
+
+        // Default sort: newest first.
+        _list.Sort(5, SortDirection.Descending);
+
+        _list.ItemActivated += (_, evt) => { if (evt is not null) OpenPr(evt); };
+        _list.Refreshed += (_, _) => LoadEventsAsync().FireAndForget(nameof(LoadEventsAsync));
+        _list.MouseDown += List_MouseDown;
+    }
+
+    private static string FormatSource(PrEventSource src) => src switch
+    {
+        PrEventSource.Human => "Human",
+        PrEventSource.Bot => "Bot",
+        _ => "—",
+    };
+
+    private static string FormatMeaning(DevOpsEvent e)
+    {
+        var name = e.EventMeaning switch
+        {
+            EventMeaning.Comment => "Comment",
+            EventMeaning.Merged => "Merged",
+            EventMeaning.Abandoned => "Abandoned",
+            EventMeaning.VoteChanged => "Vote",
+            EventMeaning.Blocked => "Blocked",
+            EventMeaning.ReviewerAdded => "Reviewer",
+            EventMeaning.Mention => "Mention",
+            EventMeaning.VoteApproved => "Approved",
+            EventMeaning.VoteApprovedWithSuggestions => "Approved+Sug",
+            EventMeaning.VoteWaiting => "Waiting",
+            _ => "—",
+        };
+        return e.IsCollapsed ? $"{name} ×{e.CollapsedCount}" : name;
     }
 
     private async void BtnMarkAll_Click(object? sender, EventArgs e)
@@ -67,36 +157,7 @@ public sealed partial class InboxEventsForm : Form
             if (IsDisposed) return;
             try
             {
-                _listView.Items.Clear();
-                foreach (var evt in events)
-                {
-                    var icon = evt.IsCollapsed ? "⊞" : evt.IsRead ? "·" : "●";
-                    var item = new ListViewItem(icon);
-                    item.SubItems.Add($"#{evt.PullRequestId}");
-                    var titleRunes = evt.PullRequestTitle.EnumerateRunes().Take(36).ToList();
-                    var title = titleRunes.Count > 35
-                        ? string.Concat(titleRunes.Take(35).Select(r => r.ToString())) + "…"
-                        : evt.PullRequestTitle;
-                    item.SubItems.Add(title);
-                    item.SubItems.Add(evt.AuthorDisplayName);
-                    string summary;
-                    if (evt.IsCollapsed)
-                    {
-                        summary = $"{evt.CollapsedCount} events collapsed";
-                    }
-                    else
-                    {
-                        var msgRunes = evt.MessageText.EnumerateRunes().Take(41).ToList();
-                        summary = msgRunes.Count > 40
-                            ? string.Concat(msgRunes.Take(40).Select(r => r.ToString())) + "…"
-                            : evt.MessageText;
-                    }
-                    item.SubItems.Add(summary);
-                    item.SubItems.Add(evt.DiscoveredAtUtc.ToLocalTime().ToString("MM/dd HH:mm"));
-                    item.Tag = evt;
-                    item.ForeColor = evt.IsRead ? TextSecondary : TextPrimary;
-                    _listView.Items.Add(item);
-                }
+                _list.SetItems(events);
             }
             catch (ObjectDisposedException) { return; }
         }
@@ -111,19 +172,16 @@ public sealed partial class InboxEventsForm : Form
         }
     }
 
-    private void OnDoubleClick(object? sender, MouseEventArgs e)
-    {
-        if (_listView.SelectedItems.Count == 0) return;
-        if (_listView.SelectedItems[0].Tag is not DevOpsEvent evt) return;
-        OpenPr(evt);
-    }
-
-    private void OnRightClick(object? sender, MouseEventArgs e)
+    private void List_MouseDown(object? sender, MouseEventArgs e)
     {
         if (e.Button != MouseButtons.Right) return;
-        var hit = _listView.HitTest(e.Location);
-        if (hit.Item?.Tag is not DevOpsEvent evt) return;
+        var evt = _list.SelectedItem;
+        if (evt is null) return;
+        ShowContextMenu(evt, e.Location);
+    }
 
+    private void ShowContextMenu(DevOpsEvent evt, Point location)
+    {
         var menu = new ContextMenuStrip();
         menu.Closed += (_, _) => menu.Dispose();
         menu.Items.Add("Open PR in browser", null, (_, _) => OpenPr(evt));
@@ -156,7 +214,7 @@ public sealed partial class InboxEventsForm : Form
             catch (Exception ex) { Log.Error(ex, "Mute failed for PR #{PrId}", evt.PullRequestId); }
         });
 
-        menu.Show(_listView, e.Location);
+        menu.Show(_list, location);
     }
 
     private static void OpenPr(DevOpsEvent evt)
@@ -209,5 +267,4 @@ public sealed partial class InboxEventsForm : Form
         await _store.MarkInboxReadAsync(_inboxName, _formCts.Token);
         await LoadEventsAsync();
     }
-
 }
