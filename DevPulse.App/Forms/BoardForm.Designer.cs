@@ -5,6 +5,9 @@ partial class BoardForm
     private System.ComponentModel.IContainer components = null;
 
     private System.Windows.Forms.Label _staleBanner;
+    private System.Windows.Forms.Panel _errorBanner;
+    private System.Windows.Forms.Label _errorBannerLabel;
+    private System.Windows.Forms.Button _errorBannerSettingsBtn;
     private System.Windows.Forms.Panel _toolbar;
     private System.Windows.Forms.FlowLayoutPanel _toolbarFlow;
     private System.Windows.Forms.Panel _boardPanel;
@@ -17,6 +20,8 @@ partial class BoardForm
     private System.Windows.Forms.Button _btnBugsOnly;
     private System.Windows.Forms.Button _btnUnassignedOnly;
     private System.Windows.Forms.Button _btnRefresh;
+    private System.Windows.Forms.ToolTip _cardTooltip;
+    private System.Windows.Forms.Timer _filterDebounceTimer;
 
     protected override void Dispose(bool disposing)
     {
@@ -29,6 +34,9 @@ partial class BoardForm
     {
         components = new System.ComponentModel.Container();
         _staleBanner = new System.Windows.Forms.Label();
+        _errorBanner = new System.Windows.Forms.Panel();
+        _errorBannerLabel = new System.Windows.Forms.Label();
+        _errorBannerSettingsBtn = new System.Windows.Forms.Button();
         _toolbar = new System.Windows.Forms.Panel();
         _toolbarFlow = new System.Windows.Forms.FlowLayoutPanel();
         _boardPanel = new System.Windows.Forms.Panel();
@@ -41,8 +49,18 @@ partial class BoardForm
         _btnBugsOnly = new System.Windows.Forms.Button();
         _btnUnassignedOnly = new System.Windows.Forms.Button();
         _btnRefresh = new System.Windows.Forms.Button();
+        _cardTooltip = new System.Windows.Forms.ToolTip(components)
+        {
+            InitialDelay = 400,
+            AutoPopDelay = 8000,
+            ReshowDelay = 200,
+            ShowAlways = true
+        };
+        _filterDebounceTimer = new System.Windows.Forms.Timer(components) { Interval = 250 };
+        _filterDebounceTimer.Tick += new System.EventHandler(FilterDebounceTimer_Tick);
         _toolbar.SuspendLayout();
         _toolbarFlow.SuspendLayout();
+        _errorBanner.SuspendLayout();
         SuspendLayout();
         //
         // _staleBanner
@@ -54,6 +72,37 @@ partial class BoardForm
         _staleBanner.ForeColor = System.Drawing.Color.White;
         _staleBanner.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
         _staleBanner.Visible = false;
+        //
+        // _errorBanner — auth/config error banner (E3); colors set dynamically by UpdateErrorBanner
+        //
+        _errorBanner.Dock = System.Windows.Forms.DockStyle.Top;
+        _errorBanner.Height = 32;
+        _errorBanner.BackColor = System.Drawing.Color.FromArgb(58, 31, 31);
+        _errorBanner.Padding = new System.Windows.Forms.Padding(12, 0, 8, 0);
+        _errorBanner.Visible = false;
+        //
+        // _errorBannerLabel
+        //
+        _errorBannerLabel.Dock = System.Windows.Forms.DockStyle.Fill;
+        _errorBannerLabel.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
+        _errorBannerLabel.ForeColor = System.Drawing.Color.FromArgb(255, 136, 136);
+        _errorBannerLabel.Text = string.Empty;
+        _errorBannerLabel.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold);
+        //
+        // _errorBannerSettingsBtn
+        //
+        _errorBannerSettingsBtn.Text = "Settings…";
+        _errorBannerSettingsBtn.Dock = System.Windows.Forms.DockStyle.Right;
+        _errorBannerSettingsBtn.Width = 110;
+        _errorBannerSettingsBtn.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+        _errorBannerSettingsBtn.BackColor = System.Drawing.Color.FromArgb(80, 40, 40);
+        _errorBannerSettingsBtn.ForeColor = System.Drawing.Color.FromArgb(240, 220, 220);
+        _errorBannerSettingsBtn.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(160, 80, 80);
+        _errorBannerSettingsBtn.Click += new System.EventHandler(ErrorBannerSettings_Click);
+        // Order matters with Dock — Right docked button must be added BEFORE the Fill label
+        // so the label fills the remaining space rather than overlaying the button.
+        _errorBanner.Controls.Add(_errorBannerSettingsBtn);
+        _errorBanner.Controls.Add(_errorBannerLabel);
         //
         // _searchBox
         //
@@ -207,11 +256,13 @@ partial class BoardForm
         Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point);
         Text = "DevPulse — Board";
         Controls.Add(_boardPanel);
+        Controls.Add(_errorBanner);
         Controls.Add(_toolbar);
         Controls.Add(_staleBanner);
         _toolbarFlow.ResumeLayout(false);
         _toolbarFlow.PerformLayout();
         _toolbar.ResumeLayout(false);
+        _errorBanner.ResumeLayout(false);
         ResumeLayout(false);
     }
 }

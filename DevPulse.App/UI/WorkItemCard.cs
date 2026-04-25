@@ -42,6 +42,33 @@ public sealed class WorkItemCard : Panel
 
     private readonly string _initials;
 
+    public string BuildTooltipText()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append('#').Append(Item.Id).Append("  ").AppendLine(Item.Title);
+
+        var assignee = string.IsNullOrWhiteSpace(Item.AssignedToDisplayName) ? "Unassigned" : Item.AssignedToDisplayName;
+        sb.Append("Assigned to: ").AppendLine(assignee);
+
+        // FirstSeenUtc is the closest stable "since DevPulse first observed it" timestamp;
+        // DiscoveredAtUtc is the next best fallback if FirstSeen wasn't recorded.
+        var createdAt = Item.FirstSeenUtc ?? Item.DiscoveredAtUtc;
+        if (createdAt != default)
+            sb.Append("Created ").Append(FormatRelativeAge(DateTimeOffset.UtcNow - createdAt)).Append(" ago");
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string FormatRelativeAge(TimeSpan span)
+    {
+        if (span.TotalMinutes < 1) return "just now";
+        if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes}m";
+        if (span.TotalHours < 24) return $"{(int)span.TotalHours}h";
+        if (span.TotalDays < 30) return $"{(int)span.TotalDays}d";
+        if (span.TotalDays < 365) return $"{(int)(span.TotalDays / 30)}mo";
+        return $"{(int)(span.TotalDays / 365)}y";
+    }
+
     public WorkItemCard(WorkItem item)
     {
         Item = item;

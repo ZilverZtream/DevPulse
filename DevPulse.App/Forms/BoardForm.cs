@@ -7,6 +7,8 @@ using DevPulse.Core.Services;
 
 namespace DevPulse.App.Forms;
 
+public readonly record struct BoardErrorState(bool RequiresUserAction, string? Reason, PollErrorKind Kind);
+
 public sealed partial class BoardForm : Form
 {
     private static readonly Color DarkBg = Color.FromArgb(30, 30, 46);
@@ -28,6 +30,12 @@ public sealed partial class BoardForm : Form
     private IReadOnlyList<IAiProvider> _aiProviders = [];
     private IReadOnlyList<AiTemplate> _aiTemplates = [];
 
+    // Tray wires these post-construction so BoardForm doesn't need a direct reference to TrayApplicationContext.
+    public Func<BoardErrorState>? ErrorStateProvider { get; set; }
+    public Action? OpenSettingsAction { get; set; }
+
+    private System.Windows.Forms.Timer? _errorPollTimer;
+
     public bool ShowStaleBanner
     {
         set
@@ -42,6 +50,67 @@ public sealed partial class BoardForm : Form
         _store = store;
         _settings = settings;
         InitializeComponent();
+
+        KeyPreview = true;
+        KeyDown += BoardForm_KeyDown;
+
+        // Periodic ping refreshes the auth banner from the polling services (E3) without coupling to TrayApplicationContext.
+        // components is initialized in InitializeComponent() above — null-forgiving is safe here.
+        _errorPollTimer = new System.Windows.Forms.Timer(components!) { Interval = 5000 };
+        _errorPollTimer.Tick += (_, _) => RefreshErrorBanner();
+        _errorPollTimer.Start();
+    }
+
+    /// <summary>Public hook so callers (e.g. TrayApplicationContext on PollCompleted) can push a fresh banner update.</summary>
+    public void RefreshErrorBanner()
+    {
+        if (IsDisposed || Disposing) return;
+        if (InvokeRequired) { try { BeginInvoke(RefreshErrorBanner); } catch (ObjectDisposedException) { } return; }
+
+        var state = ErrorStateProvider?.Invoke() ?? default;
+        UpdateErrorBanner(state);
+    }
+
+    private void UpdateErrorBanner(BoardErrorState state)
+    {
+        if (!state.RequiresUserAction && state.Kind != PollErrorKind.Transient)
+        {
+            _errorBanner.Visible = false;
+            return;
+        }
+
+        // Yellow for transient/throttled-but-stale data; red for auth/permanent failures.
+        var isStale = state.Kind == PollErrorKind.Transient || state.Kind == PollErrorKind.Throttled;
+        if (isStale && !state.RequiresUserAction)
+        {
+            _errorBanner.BackColor = System.Drawing.Color.FromArgb(58, 54, 31);
+            _errorBannerLabel.ForeColor = System.Drawing.Color.FromArgb(250, 204, 21);
+            _errorBannerSettingsBtn.BackColor = System.Drawing.Color.FromArgb(80, 70, 30);
+            _errorBannerSettingsBtn.ForeColor = System.Drawing.Color.FromArgb(240, 230, 200);
+            _errorBannerSettingsBtn.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(160, 130, 60);
+        }
+        else
+        {
+            _errorBanner.BackColor = System.Drawing.Color.FromArgb(58, 31, 31);
+            _errorBannerLabel.ForeColor = System.Drawing.Color.FromArgb(255, 136, 136);
+            _errorBannerSettingsBtn.BackColor = System.Drawing.Color.FromArgb(80, 40, 40);
+            _errorBannerSettingsBtn.ForeColor = System.Drawing.Color.FromArgb(240, 220, 220);
+            _errorBannerSettingsBtn.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(160, 80, 80);
+        }
+
+        _errorBannerLabel.Text = state.Kind switch
+        {
+            PollErrorKind.AuthRequired => "Authentication failed — open Settings to update your PAT.",
+            PollErrorKind.Permanent => state.Reason ?? "Configuration error — open Settings to fix organization/project/area paths.",
+            _ => state.Reason ?? "Board data may be stale — last refresh failed."
+        };
+
+        _errorBanner.Visible = true;
+    }
+
+    private void ErrorBannerSettings_Click(object? sender, EventArgs e)
+    {
+        OpenSettingsAction?.Invoke();
     }
 
     public void AttachAi(AiPipelineService pipeline, IEnumerable<IAiProvider> providers, IReadOnlyList<AiTemplate> templates)
@@ -200,6 +269,9 @@ public sealed partial class BoardForm : Form
 
     private void BindAiHandlersToCard(WorkItemCard card)
     {
+        // F6 — single shared ToolTip on the form, set per-card after the card is built.
+        _cardTooltip.SetToolTip(card, card.BuildTooltipText());
+
         card.OnDraftRequested += (_, _) =>
         {
             if (_aiPipeline == null) return;
@@ -228,10 +300,101 @@ public sealed partial class BoardForm : Form
         };
     }
 
-    private void SearchBox_TextChanged(object? sender, EventArgs e) => ApplyFilters();
+    // Debounced — fast typists shouldn't trigger ApplyFilters on every keystroke (F8).
+    private void SearchBox_TextChanged(object? sender, EventArgs e)
+    {
+        _filterDebounceTimer.Stop();
+        _filterDebounceTimer.Start();
+    }
+
+    private void FilterDebounceTimer_Tick(object? sender, EventArgs e)
+    {
+        _filterDebounceTimer.Stop();
+        ApplyFilters();
+    }
+
     private void TypeFilter_SelectedIndexChanged(object? sender, EventArgs e) => ApplyFilters();
     private void AssigneeFilter_SelectedIndexChanged(object? sender, EventArgs e) => ApplyFilters();
     private void PriorityFilter_SelectedIndexChanged(object? sender, EventArgs e) => ApplyFilters();
+
+    private void BoardForm_KeyDown(object? sender, KeyEventArgs e)
+    {
+        // F5 → Refresh
+        if (e.KeyCode == Keys.F5 && !e.Control && !e.Alt && !e.Shift)
+        {
+            e.Handled = true;
+            BtnRefresh_Click(this, EventArgs.Empty);
+            return;
+        }
+
+        // Ctrl+F → focus search box
+        if (e.Control && e.KeyCode == Keys.F)
+        {
+            e.Handled = true;
+            _searchBox.Focus();
+            _searchBox.SelectAll();
+            return;
+        }
+
+        // Esc → clear filters and re-render
+        if (e.KeyCode == Keys.Escape && !e.Control && !e.Alt && !e.Shift)
+        {
+            e.Handled = true;
+            _filterDebounceTimer.Stop();
+            _searchBox.Text = string.Empty;
+            if (_typeFilter.Items.Count > 0) _typeFilter.SelectedIndex = 0;
+            if (_assigneeFilter.Items.Count > 0) _assigneeFilter.SelectedIndex = 0;
+            if (_priorityFilter.Items.Count > 0) _priorityFilter.SelectedIndex = 0;
+            _mineOnly = _sprintOnly = _bugsOnly = _unassignedOnly = false;
+            _btnMineOnly.BackColor = System.Drawing.Color.FromArgb(50, 50, 78);
+            _btnSprintOnly.BackColor = System.Drawing.Color.FromArgb(50, 50, 78);
+            _btnBugsOnly.BackColor = System.Drawing.Color.FromArgb(50, 50, 78);
+            _btnUnassignedOnly.BackColor = System.Drawing.Color.FromArgb(50, 50, 78);
+            ApplyFilters();
+            return;
+        }
+
+        // Ctrl+, → open Settings
+        if (e.Control && e.KeyCode == Keys.Oemcomma)
+        {
+            e.Handled = true;
+            OpenSettingsAction?.Invoke();
+            return;
+        }
+
+        // Enter → open the first visible (non-dimmed) card's URL.
+        // Cards aren't focusable yet — defer per-card focus tracking until card selection lands.
+        if (e.KeyCode == Keys.Enter && !e.Control && !e.Alt && !e.Shift)
+        {
+            // Skip if Enter is being routed by a focused TextBox/ComboBox so user form input still works
+            if (ActiveControl is TextBox or ComboBox) return;
+
+            var card = FindFirstVisibleCard();
+            if (card != null && !string.IsNullOrEmpty(card.Item.WorkItemUrl))
+            {
+                e.Handled = true;
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(card.Item.WorkItemUrl) { UseShellExecute = true });
+                }
+                catch (Exception ex) { Serilog.Log.Warning(ex, "BoardForm: failed to open work item URL"); }
+            }
+        }
+    }
+
+    private WorkItemCard? FindFirstVisibleCard()
+    {
+        foreach (var col in _columnPanels.Values)
+        {
+            foreach (Control inner in col.Controls)
+            {
+                // BoardColumnPanel exposes a card container Panel; walk into it
+                foreach (Control c in inner.Controls)
+                    if (c is WorkItemCard card && !card.Dimmed) return card;
+            }
+        }
+        return null;
+    }
 
     private void BtnMineOnly_Click(object? sender, EventArgs e)
     {
