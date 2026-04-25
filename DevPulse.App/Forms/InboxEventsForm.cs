@@ -14,6 +14,7 @@ public sealed partial class InboxEventsForm : Form
     private readonly InboxViewService _viewService;
     private readonly IStateStore _store;
     private readonly SettingsService _settings;
+    private readonly WindowBoundsService _bounds;
     private readonly string _inboxName;
     private readonly BoardForm? _boardForm;
     private readonly CancellationTokenSource _formCts = new();
@@ -32,12 +33,33 @@ public sealed partial class InboxEventsForm : Form
         _viewService = viewService;
         _store = store;
         _settings = settings;
+        _bounds = new WindowBoundsService(store);
         _inboxName = inboxName;
         _boardForm = boardForm;
         Disposed += (_, _) => { _formCts.Cancel(); _formCts.Dispose(); };
         InitializeComponent();
         Text = $"DevPulse — {_inboxName}";
+        Load += InboxEventsForm_Load;
+        FormClosing += InboxEventsForm_FormClosing;
         LoadEventsAsync().FireAndForget(nameof(LoadEventsAsync));
+    }
+
+    private async void InboxEventsForm_Load(object? sender, EventArgs e)
+    {
+        try
+        {
+            var record = await _bounds.LoadAsync(WindowBoundsService.InboxEventsFormKey, _formCts.Token);
+            if (IsDisposed) return;
+            WindowBoundsService.ApplyOnLoad(this, record);
+        }
+        catch (Exception ex) { Log.Warning(ex, "InboxEventsForm: bounds load failed"); }
+    }
+
+    private void InboxEventsForm_FormClosing(object? sender, FormClosingEventArgs e)
+    {
+        var record = WindowBoundsService.CaptureBounds(this);
+        if (record is null) return;
+        _ = _bounds.SaveAsync(WindowBoundsService.InboxEventsFormKey, record);
     }
 
     // Called from Designer's InitializeComponent. The control is generic so the Designer cannot

@@ -16,6 +16,7 @@ public sealed partial class BoardForm : Form
 
     private readonly IStateStore _store;
     private readonly SettingsService _settings;
+    private readonly WindowBoundsService _bounds;
     private readonly BoardViewService _boardService = new();
 
     private bool _mineOnly, _sprintOnly, _bugsOnly, _unassignedOnly;
@@ -49,16 +50,39 @@ public sealed partial class BoardForm : Form
     {
         _store = store;
         _settings = settings;
+        _bounds = new WindowBoundsService(store);
         InitializeComponent();
 
         KeyPreview = true;
         KeyDown += BoardForm_KeyDown;
+
+        Load += BoardForm_Load;
+        FormClosing += BoardForm_FormClosing;
 
         // Periodic ping refreshes the auth banner from the polling services (E3) without coupling to TrayApplicationContext.
         // components is initialized in InitializeComponent() above — null-forgiving is safe here.
         _errorPollTimer = new System.Windows.Forms.Timer(components!) { Interval = 5000 };
         _errorPollTimer.Tick += (_, _) => RefreshErrorBanner();
         _errorPollTimer.Start();
+    }
+
+    private async void BoardForm_Load(object? sender, EventArgs e)
+    {
+        try
+        {
+            var record = await _bounds.LoadAsync(WindowBoundsService.BoardFormKey);
+            if (IsDisposed) return;
+            WindowBoundsService.ApplyOnLoad(this, record);
+        }
+        catch (Exception ex) { Serilog.Log.Warning(ex, "BoardForm: bounds load failed"); }
+    }
+
+    private void BoardForm_FormClosing(object? sender, FormClosingEventArgs e)
+    {
+        var record = WindowBoundsService.CaptureBounds(this);
+        if (record is null) return;
+        // Fire-and-forget — closing the form shouldn't await disk I/O. Errors are logged inside SaveAsync.
+        _ = _bounds.SaveAsync(WindowBoundsService.BoardFormKey, record);
     }
 
     /// <summary>Public hook so callers (e.g. TrayApplicationContext on PollCompleted) can push a fresh banner update.</summary>

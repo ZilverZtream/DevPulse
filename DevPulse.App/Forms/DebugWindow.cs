@@ -14,6 +14,7 @@ public sealed partial class DebugWindow : Form
 
     private readonly DebugLogService _debugLog;
     private readonly SettingsService _settings;
+    private readonly WindowBoundsService _bounds;
     private int _displayCount = 500;
     private int _errorDisplayCount = 100;
 
@@ -27,7 +28,11 @@ public sealed partial class DebugWindow : Form
     {
         _debugLog = debugLog;
         _settings = settings;
+        _bounds = new WindowBoundsService(settings);
         InitializeComponent();
+
+        Load += DebugWindow_Load;
+        FormClosing += DebugWindow_FormClosing;
 
         _btnExport = new Button
         {
@@ -59,6 +64,24 @@ public sealed partial class DebugWindow : Form
     {
         try { await RefreshAllAsync(); }
         catch (Exception ex) { Log.Warning(ex, "DebugWindow refresh failed"); }
+    }
+
+    private async void DebugWindow_Load(object? sender, EventArgs e)
+    {
+        try
+        {
+            var record = await _bounds.LoadAsync(WindowBoundsService.DebugWindowKey);
+            if (IsDisposed) return;
+            WindowBoundsService.ApplyOnLoad(this, record);
+        }
+        catch (Exception ex) { Log.Warning(ex, "DebugWindow: bounds load failed"); }
+    }
+
+    private void DebugWindow_FormClosing(object? sender, FormClosingEventArgs e)
+    {
+        var record = WindowBoundsService.CaptureBounds(this);
+        if (record is null) return;
+        _ = _bounds.SaveAsync(WindowBoundsService.DebugWindowKey, record);
     }
 
     private void BtnExport_Click(object? sender, EventArgs e)
