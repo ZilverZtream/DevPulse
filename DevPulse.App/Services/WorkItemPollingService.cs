@@ -41,6 +41,7 @@ public sealed class WorkItemPollingService : PollingLoopBase
 
     protected override async Task OnPollFailedAsync(Exception ex, CancellationToken ct)
     {
-        _debugLog.UpdatePollStatus("workitems", await _store.GetLastSuccessfulPollAsync("workitems", ct), null, 0, PollErrorClassifier.Classify(ex));
+        var kind = PollErrorClassifier.Classify(ex);
+        _debugLog.UpdatePollStatus("workitems", await _store.GetLastSuccessfulPollAsync("workitems", ct), null, 0, $"{kind}: {ex.Message}");
     }
 }

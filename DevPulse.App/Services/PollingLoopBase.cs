@@ -1,3 +1,4 @@
+using DevPulse.Core.Services;
 using Serilog;
 
 namespace DevPulse.App.Services;
@@ -13,6 +14,16 @@ public abstract class PollingLoopBase : IDisposable, IAsyncDisposable
     public event EventHandler? PollCompleted;
     private volatile bool _lastPollFailed;
     public bool LastPollFailed => _lastPollFailed;
+
+    // Set by ExecuteSafeAsync after classification — Wave E3 will render an auth/config banner from this.
+    private volatile bool _lastErrorRequiresUserAction;
+    public bool LastErrorRequiresUserAction => _lastErrorRequiresUserAction;
+
+    private volatile string? _lastErrorReason;
+    public string? LastErrorReason => _lastErrorReason;
+
+    private PollErrorKind _lastErrorKind = PollErrorKind.Unknown;
+    public PollErrorKind LastErrorKind => _lastErrorKind;
 
     protected abstract string TrackName { get; }
     protected abstract Task ExecutePollAsync(CancellationToken ct);
@@ -52,6 +63,9 @@ public abstract class PollingLoopBase : IDisposable, IAsyncDisposable
             ct.ThrowIfCancellationRequested();
             await ExecutePollAsync(ct).ConfigureAwait(false);
             _lastPollFailed = false;
+            _lastErrorRequiresUserAction = false;
+            _lastErrorReason = null;
+            _lastErrorKind = PollErrorKind.Unknown;
             // Guard handler — if a subscriber throws, it's a UI bug, not a poll failure
             try { PollCompleted?.Invoke(this, EventArgs.Empty); }
             catch (Exception handlerEx) { Log.Warning(handlerEx, "{Track} PollCompleted handler threw", TrackName); }
@@ -59,7 +73,31 @@ public abstract class PollingLoopBase : IDisposable, IAsyncDisposable
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            Log.Error(ex, "{Track} poll cycle failed", TrackName);
+            var kind = PollErrorClassifier.Classify(ex);
+            _lastErrorKind = kind;
+            switch (kind)
+            {
+                case PollErrorKind.AuthRequired:
+                    Log.Error(ex, "{Track} poll failed (AuthRequired) — user must re-enter PAT or fix permissions", TrackName);
+                    _lastErrorRequiresUserAction = true;
+                    _lastErrorReason = "Authentication required — check PAT and permissions.";
+                    break;
+                case PollErrorKind.Permanent:
+                    Log.Error(ex, "{Track} poll failed (Permanent) — bad config or resource missing", TrackName);
+                    _lastErrorRequiresUserAction = true;
+                    _lastErrorReason = "Permanent error — check organization/project/area configuration.";
+                    break;
+                case PollErrorKind.Throttled:
+                    Log.Warning(ex, "{Track} poll throttled (429) — will retry next cycle", TrackName);
+                    _lastErrorRequiresUserAction = false;
+                    _lastErrorReason = null;
+                    break;
+                default:
+                    Log.Error(ex, "{Track} poll cycle failed", TrackName);
+                    _lastErrorRequiresUserAction = false;
+                    _lastErrorReason = null;
+                    break;
+            }
             _lastPollFailed = true;
             await OnPollFailedAsync(ex, ct).ConfigureAwait(false);
         }

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using DevPulse.Core.Enums;
 using DevPulse.Core.Interfaces;
@@ -17,6 +18,11 @@ public sealed class SettingsService
     private const string MergedPrsId      = "00000000-0000-0000-0000-000000000003";
     private const string PrioritizedId    = "00000000-0000-0000-0000-000000000004";
 
+    // Set on any JsonException during a load — TrayApplicationContext / BoardForm can read this
+    // and surface a banner so the user knows their settings rolled back to defaults.
+    public bool HadLoadCorruption { get; private set; }
+    public string? LastCorruptionDescription { get; private set; }
+
     public SettingsService(IStateStore store)
     {
         _store = store;
@@ -27,7 +33,12 @@ public sealed class SettingsService
         var json = await _store.GetSettingAsync("AppSettings", ct);
         if (json == null) return new AppSettings();
         try { return JsonSerializer.Deserialize<AppSettings>(json, Json) ?? new AppSettings(); }
-        catch (JsonException ex) { Log.Warning(ex, "AppSettings JSON corrupt; returning defaults"); return new AppSettings(); }
+        catch (JsonException ex)
+        {
+            await HandleCorruptionAsync("AppSettings", json, "AppSettings", ex,
+                JsonSerializer.Serialize(new AppSettings(), Json), ct);
+            return new AppSettings();
+        }
     }
 
     public async Task SaveAppSettingsAsync(AppSettings settings, CancellationToken ct = default)
@@ -69,7 +80,12 @@ public sealed class SettingsService
 
         List<InboxDefinition> inboxes;
         try { inboxes = JsonSerializer.Deserialize<List<InboxDefinition>>(json, Json) ?? DefaultInboxes(); }
-        catch (JsonException ex) { Log.Warning(ex, "InboxDefinitions JSON corrupt; returning defaults"); return DefaultInboxes(); }
+        catch (JsonException ex)
+        {
+            await HandleCorruptionAsync("InboxDefinitions", json, "Inbox rules", ex,
+                JsonSerializer.Serialize(DefaultInboxes(), Json), ct);
+            return DefaultInboxes();
+        }
 
         // Legacy migration: if any entry lacks an Id, use its Name as a deterministic backfill.
         // This is an in-memory transform — persistence happens the next time SaveInboxDefinitionsAsync commits.
@@ -140,7 +156,12 @@ public sealed class SettingsService
         var json = await _store.GetSettingAsync("BoardColumns", ct);
         if (json == null) return DefaultBoardColumns();
         try { return JsonSerializer.Deserialize<List<BoardColumnDefinition>>(json, Json) ?? DefaultBoardColumns(); }
-        catch (JsonException ex) { Log.Warning(ex, "BoardColumns JSON corrupt; returning defaults"); return DefaultBoardColumns(); }
+        catch (JsonException ex)
+        {
+            await HandleCorruptionAsync("BoardColumns", json, "Board columns", ex,
+                JsonSerializer.Serialize(DefaultBoardColumns(), Json), ct);
+            return DefaultBoardColumns();
+        }
     }
 
     public async Task SaveBoardColumnsAsync(List<BoardColumnDefinition> columns, CancellationToken ct = default)
@@ -151,7 +172,12 @@ public sealed class SettingsService
         var json = await _store.GetSettingAsync("KeywordPacks", ct);
         if (json == null) return DefaultKeywordPacks();
         try { return JsonSerializer.Deserialize<List<KeywordPack>>(json, Json) ?? DefaultKeywordPacks(); }
-        catch (JsonException ex) { Log.Warning(ex, "KeywordPacks JSON corrupt; returning defaults"); return DefaultKeywordPacks(); }
+        catch (JsonException ex)
+        {
+            await HandleCorruptionAsync("KeywordPacks", json, "Keyword packs", ex,
+                JsonSerializer.Serialize(DefaultKeywordPacks(), Json), ct);
+            return DefaultKeywordPacks();
+        }
     }
 
     public async Task SaveKeywordPacksAsync(List<KeywordPack> packs, CancellationToken ct = default)
@@ -162,7 +188,12 @@ public sealed class SettingsService
         var json = await _store.GetSettingAsync("IdentityAliases", ct);
         if (json == null) return [];
         try { return JsonSerializer.Deserialize<List<IdentityAlias>>(json, Json) ?? []; }
-        catch (JsonException ex) { Log.Warning(ex, "IdentityAliases JSON corrupt; returning empty"); return []; }
+        catch (JsonException ex)
+        {
+            await HandleCorruptionAsync("IdentityAliases", json, "Identity aliases", ex,
+                JsonSerializer.Serialize(new List<IdentityAlias>(), Json), ct);
+            return [];
+        }
     }
 
     public async Task SaveIdentityAliasesAsync(List<IdentityAlias> aliases, CancellationToken ct = default)
@@ -173,7 +204,12 @@ public sealed class SettingsService
         var json = await _store.GetSettingAsync("Watchers", ct);
         if (json == null) return [];
         try { return JsonSerializer.Deserialize<List<Watcher>>(json, Json) ?? []; }
-        catch (JsonException ex) { Log.Warning(ex, "Watchers JSON corrupt; returning empty"); return []; }
+        catch (JsonException ex)
+        {
+            await HandleCorruptionAsync("Watchers", json, "Watchers", ex,
+                JsonSerializer.Serialize(new List<Watcher>(), Json), ct);
+            return [];
+        }
     }
 
     public async Task SaveWatchersAsync(List<Watcher> watchers, CancellationToken ct = default)
@@ -197,7 +233,12 @@ public sealed class SettingsService
         var json = await _store.GetSettingAsync("AiProviderProfiles", ct);
         if (string.IsNullOrEmpty(json)) return [];
         try { return JsonSerializer.Deserialize<List<AiProviderProfile>>(json, Json) ?? []; }
-        catch (JsonException ex) { Log.Warning(ex, "AiProviderProfiles JSON corrupt"); return []; }
+        catch (JsonException ex)
+        {
+            await HandleCorruptionAsync("AiProviderProfiles", json, "AI provider profiles", ex,
+                JsonSerializer.Serialize(new List<AiProviderProfile>(), Json), ct);
+            return [];
+        }
     }
 
     public async Task SeedDefaultsIfNeededAsync(CancellationToken ct = default)
@@ -210,6 +251,37 @@ public sealed class SettingsService
             await SaveKeywordPacksAsync(DefaultKeywordPacks(), ct);
         if (await _store.GetSettingAsync("AppSettings", ct) == null)
             await SaveAppSettingsAsync(new AppSettings(), ct);
+    }
+
+    // Backs up the corrupt value to a sibling KV row, resets the original key to its seeded default,
+    // and records a description so the UI can warn the user that data was rolled back.
+    private async Task HandleCorruptionAsync(
+        string key,
+        string corruptValue,
+        string humanLabel,
+        JsonException ex,
+        string defaultJson,
+        CancellationToken ct)
+    {
+        HadLoadCorruption = true;
+        LastCorruptionDescription = $"{humanLabel} JSON could not be parsed: {ex.Message}";
+
+        var timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMddTHHmmssfffZ", CultureInfo.InvariantCulture);
+        var backupKey = $"{key}.corrupt.{timestamp}";
+
+        Log.Warning(ex, "Settings key '{Key}' was corrupt; backing up to '{BackupKey}' and resetting to defaults", key, backupKey);
+
+        try
+        {
+            await _store.SetSettingsBatchAsync(
+                [(backupKey, corruptValue), (key, defaultJson)],
+                ct);
+        }
+        catch (Exception storeEx)
+        {
+            // If the backup write itself fails, surface it but don't crash the load — caller still gets defaults.
+            Log.Error(storeEx, "Failed to back up corrupt settings key '{Key}'; defaults still returned in memory", key);
+        }
     }
 
     private static List<InboxDefinition> DefaultInboxes() =>

@@ -284,40 +284,4 @@ public class MuteServiceTimezoneTests
     }
 }
 
-public class PollErrorClassifierTests
-{
-    [Theory]
-    [InlineData(401, "Authentication failure (401)")]
-    [InlineData(403, "Authorization failure (403)")]
-    [InlineData(429, "Rate limited (429)")]
-    [InlineData(500, "Server error (500)")]
-    [InlineData(503, "Server error (503)")]
-    public void Classify_KnownHttpStatus_ReturnsClassifiedMessage(int statusCode, string expected)
-    {
-        var ex = new HttpRequestException("msg", null, (System.Net.HttpStatusCode)statusCode);
-
-        var result = PollErrorClassifier.Classify(ex);
-
-        Assert.Equal(expected, result);
-    }
-
-    [Fact]
-    public void Classify_HttpExceptionWithNoStatusCode_ReturnsExceptionMessage()
-    {
-        var ex = new HttpRequestException("network error");
-
-        var result = PollErrorClassifier.Classify(ex);
-
-        Assert.Equal("network error", result);
-    }
-
-    [Fact]
-    public void Classify_NonHttpException_ReturnsExceptionMessage()
-    {
-        var ex = new InvalidOperationException("something went wrong");
-
-        var result = PollErrorClassifier.Classify(ex);
-
-        Assert.Equal("something went wrong", result);
-    }
-}
+// PollErrorClassifier tests moved to PollErrorClassifierTests.cs (typed enum API)
