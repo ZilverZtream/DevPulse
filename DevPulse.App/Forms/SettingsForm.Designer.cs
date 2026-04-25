@@ -70,6 +70,10 @@ partial class SettingsForm
 
     // Advanced tab controls
     private System.Windows.Forms.Button _btnExport;
+    private System.Windows.Forms.CheckBox _chkAutoStart;
+
+    // Single ToolTip instance shared across the form (registered with components for auto-dispose).
+    private System.Windows.Forms.ToolTip _toolTips = null!;
 
     // AI tab
     private System.Windows.Forms.TabPage _tabAi;
@@ -166,7 +170,11 @@ partial class SettingsForm
     private void InitializeComponent()
     {
         components = new System.ComponentModel.Container();
-        var toolTips = new System.Windows.Forms.ToolTip(components);
+        _toolTips = new System.Windows.Forms.ToolTip(components);
+        _toolTips.AutoPopDelay = 12000;
+        _toolTips.InitialDelay = 400;
+        _toolTips.ReshowDelay = 200;
+        var toolTips = _toolTips;
 
         // ── Instantiate all controls ──────────────────────────────────────────
         _tabs = new System.Windows.Forms.TabControl();
@@ -556,6 +564,13 @@ partial class SettingsForm
         _btnExport.Height = 28;
         _btnExport.Click += new System.EventHandler(BtnExport_Click);
 
+        _chkAutoStart = new System.Windows.Forms.CheckBox
+        {
+            Text = "Start DevPulse when I sign in to Windows",
+            AutoSize = true,
+            ForeColor = System.Drawing.Color.FromArgb(220, 220, 235)
+        };
+
         _layoutAdvanced.Dock = System.Windows.Forms.DockStyle.Fill;
         _layoutAdvanced.ColumnCount = 2;
         _layoutAdvanced.Padding = new System.Windows.Forms.Padding(16);
@@ -563,7 +578,9 @@ partial class SettingsForm
         _layoutAdvanced.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 220F));
         _layoutAdvanced.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
         _layoutAdvanced.Controls.Add(new System.Windows.Forms.Label(), 0, 0);
-        _layoutAdvanced.Controls.Add(_btnExport, 1, 0);
+        _layoutAdvanced.Controls.Add(_chkAutoStart, 1, 0);
+        _layoutAdvanced.Controls.Add(new System.Windows.Forms.Label(), 0, 1);
+        _layoutAdvanced.Controls.Add(_btnExport, 1, 1);
 
         _tabAdvanced.Text = "Advanced";
         _tabAdvanced.BackColor = System.Drawing.Color.FromArgb(30, 30, 46);

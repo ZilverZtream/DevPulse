@@ -19,6 +19,8 @@ public sealed partial class SettingsForm : Form
         _settings = settings;
         InitializeComponent();
         WireListEditHandlers();
+        BindTooltips();
+        _chkAutoStart.Checked = AutoStartService.IsEnabled();
         // Show a loading placeholder while DPAPI unwrap runs off the UI thread.
         _patBox.Text = string.Empty;
         _patBox.Enabled = false;
@@ -176,6 +178,11 @@ public sealed partial class SettingsForm : Form
         // Save OpenRouter key via DPAPI AFTER the transactional KV write — if this fails, provider/template config is already safe.
         if (!string.IsNullOrWhiteSpace(_txtOpenRouterKey.Text))
             DevPulse.Infrastructure.Security.SecretStore.SaveSecret("openrouter", _txtOpenRouterKey.Text);
+
+        if (_chkAutoStart.Checked)
+            AutoStartService.Enable(Application.ExecutablePath);
+        else
+            AutoStartService.Disable();
 
         MessageBox.Show("Settings saved.", "DevPulse", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
@@ -671,5 +678,73 @@ public sealed partial class SettingsForm : Form
         dlg.Controls.AddRange([lbl, txt, ok, cancel]);
         txt.SelectAll();
         return dlg.ShowDialog() == DialogResult.OK ? txt.Text : null;
+    }
+
+    // ── Tooltips ───────────────────────────────────────────────────────────────
+    // Applies tooltips to every meaningful input on every tab. Centralised so adding a new
+    // setting in the Designer also gets a hint here without scattering SetToolTip calls.
+    private void BindTooltips()
+    {
+        var t = _toolTips;
+
+        // Connection
+        t.SetToolTip(_orgUrl, "Your Azure DevOps organization URL, e.g. https://dev.azure.com/contoso");
+        t.SetToolTip(_project, "Default Azure DevOps project to poll");
+        t.SetToolTip(_repoFilter, "Optional: limit PR polling to one repository (leave blank for all repos in the project)");
+        t.SetToolTip(_currentUser, "Your canonical email — used to detect PRs assigned to you and your votes");
+        t.SetToolTip(_patBox, "Personal Access Token (Code: Read, Work Items: Read). Stored encrypted via Windows DPAPI");
+        t.SetToolTip(_btnTest, "Send a single request to Azure DevOps using the values above to verify connectivity");
+
+        // Polling
+        t.SetToolTip(_prInterval, "How often to check for new pull request activity (minutes)");
+        t.SetToolTip(_wiInterval, "How often to refresh the Kanban board (minutes)");
+        t.SetToolTip(_refreshOnStartup, "Run a polling cycle immediately when DevPulse starts, instead of waiting for the first interval");
+
+        // Identities
+        t.SetToolTip(_botPatterns, "Regular expressions matching bot accounts. Bot comments are collapsed in inbox.");
+        t.SetToolTip(_poQaGroup, "Canonical keys (emails) for PO/QA reviewers — used by routing rules that target this group");
+        t.SetToolTip(_aliasGrid, "Map alternate names/emails to a single canonical identity so votes and comments deduplicate correctly");
+        t.SetToolTip(_btnAliasAdd, "Add a new alias row (Insert)");
+        t.SetToolTip(_btnAliasRemove, "Remove the selected alias (Delete)");
+        t.SetToolTip(_btnAliasUp, "Move the selected alias up (Alt+Up)");
+        t.SetToolTip(_btnAliasDown, "Move the selected alias down (Alt+Down)");
+
+        // Inboxes
+        t.SetToolTip(_inboxList, "Inboxes are evaluated top-to-bottom. The first matching rule wins.");
+        t.SetToolTip(_inboxRulesJson, "JSON view of the selected inbox definition (read-only preview)");
+        t.SetToolTip(_btnInboxAdd, "Add a new inbox (Insert)");
+        t.SetToolTip(_btnInboxRemove, "Remove the selected inbox (Delete) — system inboxes cannot be removed");
+        t.SetToolTip(_btnInboxUp, "Move the selected inbox up — affects rule evaluation order (Alt+Up)");
+        t.SetToolTip(_btnInboxDown, "Move the selected inbox down — affects rule evaluation order (Alt+Down)");
+
+        // Board
+        t.SetToolTip(_areaPath, "Azure DevOps area path used for the work item WIQL query (e.g. Project\\Team)");
+        t.SetToolTip(_iterationPath, "Optional iteration path filter — leave blank to include all iterations");
+        t.SetToolTip(_columnsGrid, "Define Kanban board columns and which ADO states map to each. Aging days control card highlighting.");
+        t.SetToolTip(_btnColumnsAdd, "Add a new column (Insert)");
+        t.SetToolTip(_btnColumnsRemove, "Remove the selected column (Delete)");
+        t.SetToolTip(_btnColumnsUp, "Move the selected column left (Alt+Up)");
+        t.SetToolTip(_btnColumnsDown, "Move the selected column right (Alt+Down)");
+
+        // Advanced
+        t.SetToolTip(_btnExport, "Export non-secret settings to a JSON file. Personal Access Token is excluded.");
+        t.SetToolTip(_chkAutoStart, "Add DevPulse to your per-user Windows Run key so it launches when you sign in");
+        t.SetToolTip(_btnSave, "Save all changes across every tab");
+
+        // AI
+        t.SetToolTip(_txtAiRoot, "Root folder where AI review outputs are written (one subfolder per work item)");
+        t.SetToolTip(_chkClaudeEnabled, "Enable the Claude Code CLI provider for AI reviews");
+        t.SetToolTip(_txtClaudePath, "Full path to the claude executable (e.g. C:\\Users\\you\\AppData\\Roaming\\npm\\claude.cmd)");
+        t.SetToolTip(_btnClaudeDetect, "Run 'where claude' to locate the CLI on your PATH");
+        t.SetToolTip(_chkOpenRouterEnabled, "Enable the OpenRouter HTTP provider for AI reviews");
+        t.SetToolTip(_txtOpenRouterKey, "OpenRouter API key. Stored encrypted via Windows DPAPI.");
+        t.SetToolTip(_txtOpenRouterModel, "Default OpenRouter model id, e.g. anthropic/claude-3.5-sonnet");
+        t.SetToolTip(_lstAiTemplates, "AI review templates. Select a template to edit its required headers and prompt body.");
+        t.SetToolTip(_txtTemplateHeaders, "Comma-separated markdown headers the AI output must contain (validated post-run)");
+        t.SetToolTip(_txtTemplateBody, "Prompt body for this template. Tokens like {{Title}}, {{Description}} are substituted at run time.");
+        t.SetToolTip(_btnAiTplAdd, "Add a new AI template (Insert)");
+        t.SetToolTip(_btnAiTplRemove, "Remove the selected template (Delete)");
+        t.SetToolTip(_btnAiTplUp, "Move the selected template up (Alt+Up)");
+        t.SetToolTip(_btnAiTplDown, "Move the selected template down (Alt+Down)");
     }
 }
