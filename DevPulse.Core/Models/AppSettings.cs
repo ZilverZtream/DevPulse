@@ -21,6 +21,7 @@ public sealed class AppSettings
     public List<string> PoQaGroupCanonicalKeys { get; set; } = [];
     public string NeedsAttentionKeywordPackName { get; set; } = "needs-attention";
     public string AiOutputRootPath { get; set; } = DefaultAiOutputRootPath();
+    public bool HasCompletedFirstRun { get; set; }
 
     // Computed lazily so the resolved path tracks the actual user profile at first-run, not at
     // assembly load. Using SpecialFolder.UserProfile + "Documents" keeps the default reasonable on

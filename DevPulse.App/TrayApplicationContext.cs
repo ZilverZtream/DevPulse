@@ -71,7 +71,13 @@ public sealed class TrayApplicationContext : ApplicationContext
                 return;
             }
             _needsInitRetry = true;
-            _uiSync.Post(_ => ShowSettings(), null);
+            // First-run wizard takes priority when the user has never completed onboarding AND
+            // there's no PAT yet. After it returns we recurse — the wizard saves settings, so the
+            // next IsConfigured check should pass. If the user cancels we fall back to Settings.
+            if (!appSettings.HasCompletedFirstRun && !patResult.IsOk)
+                _uiSync.Post(_ => ShowFirstRunWizard(), null);
+            else
+                _uiSync.Post(_ => ShowSettings(), null);
             return;
         }
 
@@ -329,6 +335,25 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
         _debugWindow.Show();
         _debugWindow.BringToFront();
+    }
+
+    private void ShowFirstRunWizard()
+    {
+        using var wizard = new FirstRunForm(_settings);
+        var result = wizard.ShowDialog();
+        if (result == DialogResult.OK)
+        {
+            // Wizard saved settings + PAT; reset attempt counter so the retry goes through fresh.
+            _needsInitRetry = false;
+            _initAttempts = 0;
+            _uiSync.Post(_ => RunBackground(InitializeAsync, "post-firstrun-initialize"), null);
+        }
+        else
+        {
+            // User cancelled the wizard — fall back to the Settings dialog so they can configure
+            // manually. The existing _needsInitRetry path then re-runs init when they save.
+            ShowSettings();
+        }
     }
 
     private void ShowSettings()
