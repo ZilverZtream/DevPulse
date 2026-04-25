@@ -84,6 +84,24 @@ partial class SettingsForm
     private System.Windows.Forms.TextBox _txtTemplateHeaders;
     private System.Windows.Forms.TextBox _txtTemplateBody;
 
+    // F4: Add / Remove / Reorder buttons for each list-like editor
+    private System.Windows.Forms.Button _btnAliasAdd;
+    private System.Windows.Forms.Button _btnAliasRemove;
+    private System.Windows.Forms.Button _btnAliasUp;
+    private System.Windows.Forms.Button _btnAliasDown;
+    private System.Windows.Forms.Button _btnColumnsAdd;
+    private System.Windows.Forms.Button _btnColumnsRemove;
+    private System.Windows.Forms.Button _btnColumnsUp;
+    private System.Windows.Forms.Button _btnColumnsDown;
+    private System.Windows.Forms.Button _btnInboxAdd;
+    private System.Windows.Forms.Button _btnInboxRemove;
+    private System.Windows.Forms.Button _btnInboxUp;
+    private System.Windows.Forms.Button _btnInboxDown;
+    private System.Windows.Forms.Button _btnAiTplAdd;
+    private System.Windows.Forms.Button _btnAiTplRemove;
+    private System.Windows.Forms.Button _btnAiTplUp;
+    private System.Windows.Forms.Button _btnAiTplDown;
+
     protected override void Dispose(bool disposing)
     {
         if (disposing && components != null)
@@ -91,9 +109,64 @@ partial class SettingsForm
         base.Dispose(disposing);
     }
 
+    // Build a small dark-themed toolbar button (used for + / – / ↑ / ↓ strips).
+    private static System.Windows.Forms.Button MakeToolButton(string text, string tooltip, System.Windows.Forms.ToolTip tip)
+    {
+        var b = new System.Windows.Forms.Button
+        {
+            Text = text,
+            Width = text.Length > 1 ? 64 : 32,
+            Height = 24,
+            FlatStyle = System.Windows.Forms.FlatStyle.Flat,
+            BackColor = System.Drawing.Color.FromArgb(42, 42, 62),
+            ForeColor = System.Drawing.Color.FromArgb(220, 220, 224),
+            Margin = new System.Windows.Forms.Padding(0, 4, 4, 0),
+            UseVisualStyleBackColor = false,
+            TabStop = false,
+            Font = new System.Drawing.Font("Segoe UI", 9F)
+        };
+        b.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(58, 58, 82);
+        b.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(58, 58, 82);
+        b.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(72, 72, 96);
+        tip.SetToolTip(b, tooltip);
+        return b;
+    }
+
+    // Build a list-with-button-strip composite. The list is docked Fill in `host`; the strip is docked Bottom.
+    private static System.Windows.Forms.Panel MakeListWithStrip(
+        System.Windows.Forms.Control list,
+        System.Windows.Forms.Button add,
+        System.Windows.Forms.Button remove,
+        System.Windows.Forms.Button up,
+        System.Windows.Forms.Button down)
+    {
+        var strip = new System.Windows.Forms.FlowLayoutPanel
+        {
+            Dock = System.Windows.Forms.DockStyle.Bottom,
+            Height = 32,
+            FlowDirection = System.Windows.Forms.FlowDirection.LeftToRight,
+            BackColor = System.Drawing.Color.FromArgb(30, 30, 46),
+            Padding = new System.Windows.Forms.Padding(0, 4, 0, 0),
+            Margin = new System.Windows.Forms.Padding(0)
+        };
+        strip.Controls.AddRange(new System.Windows.Forms.Control[] { add, remove, up, down });
+
+        var host = new System.Windows.Forms.Panel
+        {
+            Dock = System.Windows.Forms.DockStyle.Fill,
+            BackColor = System.Drawing.Color.FromArgb(30, 30, 46),
+            Margin = new System.Windows.Forms.Padding(0)
+        };
+        list.Dock = System.Windows.Forms.DockStyle.Fill;
+        host.Controls.Add(list);
+        host.Controls.Add(strip);
+        return host;
+    }
+
     private void InitializeComponent()
     {
         components = new System.ComponentModel.Container();
+        var toolTips = new System.Windows.Forms.ToolTip(components);
 
         // ── Instantiate all controls ──────────────────────────────────────────
         _tabs = new System.Windows.Forms.TabControl();
@@ -159,6 +232,24 @@ partial class SettingsForm
 
         // Advanced controls
         _btnExport = new System.Windows.Forms.Button();
+
+        // F4 list-edit buttons
+        _btnAliasAdd = MakeToolButton("+ Add", "Add alias (Insert)", toolTips);
+        _btnAliasRemove = MakeToolButton("– Remove", "Remove alias (Delete)", toolTips);
+        _btnAliasUp = MakeToolButton("↑", "Move up (Alt+Up)", toolTips);
+        _btnAliasDown = MakeToolButton("↓", "Move down (Alt+Down)", toolTips);
+        _btnColumnsAdd = MakeToolButton("+ Add", "Add column (Insert)", toolTips);
+        _btnColumnsRemove = MakeToolButton("– Remove", "Remove column (Delete)", toolTips);
+        _btnColumnsUp = MakeToolButton("↑", "Move up (Alt+Up)", toolTips);
+        _btnColumnsDown = MakeToolButton("↓", "Move down (Alt+Down)", toolTips);
+        _btnInboxAdd = MakeToolButton("+ Add", "Add inbox (Insert)", toolTips);
+        _btnInboxRemove = MakeToolButton("– Remove", "Remove inbox (Delete)", toolTips);
+        _btnInboxUp = MakeToolButton("↑", "Move up (Alt+Up)", toolTips);
+        _btnInboxDown = MakeToolButton("↓", "Move down (Alt+Down)", toolTips);
+        _btnAiTplAdd = MakeToolButton("+ Add", "Add template (Insert)", toolTips);
+        _btnAiTplRemove = MakeToolButton("– Remove", "Remove template (Delete)", toolTips);
+        _btnAiTplUp = MakeToolButton("↑", "Move up (Alt+Up)", toolTips);
+        _btnAiTplDown = MakeToolButton("↓", "Move down (Alt+Down)", toolTips);
 
         SuspendLayout();
         _layoutConnection.SuspendLayout();
@@ -350,7 +441,9 @@ partial class SettingsForm
         _layoutIdentities.Controls.Add(_lblPoQaGroup, 0, 1);
         _layoutIdentities.Controls.Add(_poQaGroup, 1, 1);
         _layoutIdentities.Controls.Add(_lblAliases, 0, 2);
-        _layoutIdentities.Controls.Add(_aliasGrid, 1, 2);
+        _layoutIdentities.Controls.Add(
+            MakeListWithStrip(_aliasGrid, _btnAliasAdd, _btnAliasRemove, _btnAliasUp, _btnAliasDown),
+            1, 2);
 
         _tabIdentities.Text = "Identities";
         _tabIdentities.BackColor = System.Drawing.Color.FromArgb(30, 30, 46);
@@ -374,7 +467,8 @@ partial class SettingsForm
         _splitInboxes.Dock = System.Windows.Forms.DockStyle.Fill;
         _splitInboxes.BackColor = System.Drawing.Color.FromArgb(30, 30, 46);
         _splitInboxes.SplitterDistance = 200;
-        _splitInboxes.Panel1.Controls.Add(_inboxList);
+        _splitInboxes.Panel1.Controls.Add(
+            MakeListWithStrip(_inboxList, _btnInboxAdd, _btnInboxRemove, _btnInboxUp, _btnInboxDown));
         _splitInboxes.Panel2.Controls.Add(_inboxRulesJson);
 
         _tabInboxes.Text = "Inboxes";
@@ -434,7 +528,9 @@ partial class SettingsForm
         _layoutBoard.Controls.Add(_lblIterationPath, 0, 1);
         _layoutBoard.Controls.Add(_iterationPath, 1, 1);
         _layoutBoard.Controls.Add(_lblColumns, 0, 2);
-        _layoutBoard.Controls.Add(_columnsGrid, 1, 2);
+        _layoutBoard.Controls.Add(
+            MakeListWithStrip(_columnsGrid, _btnColumnsAdd, _btnColumnsRemove, _btnColumnsUp, _btnColumnsDown),
+            1, 2);
 
         _tabBoard.Text = "Board";
         _tabBoard.BackColor = System.Drawing.Color.FromArgb(30, 30, 46);
@@ -562,7 +658,11 @@ partial class SettingsForm
         };
         _lstAiTemplates.SelectedIndexChanged += new System.EventHandler(LstAiTemplates_SelectedIndexChanged);
         aiLayout.Controls.Add(MakeLabel("Templates:"));
-        aiLayout.Controls.Add(_lstAiTemplates);
+        var aiTplHost = MakeListWithStrip(_lstAiTemplates, _btnAiTplAdd, _btnAiTplRemove, _btnAiTplUp, _btnAiTplDown);
+        // List is small so size the host explicitly so the AI layout doesn't collapse it.
+        aiTplHost.Height = 116;
+        aiTplHost.Dock = System.Windows.Forms.DockStyle.Fill;
+        aiLayout.Controls.Add(aiTplHost);
 
         _txtTemplateHeaders = MakeTextBox();
         aiLayout.Controls.Add(MakeLabel("Required headers:"));
