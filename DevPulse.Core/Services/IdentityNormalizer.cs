@@ -23,8 +23,9 @@ public sealed class IdentityNormalizer
 
         foreach (var alias in _aliases)
         {
-            if (alias.Variants.Any(v => v.Equals(raw, StringComparison.OrdinalIgnoreCase) ||
-                                        v.Equals(identity.DisplayName, StringComparison.OrdinalIgnoreCase)))
+            // Null-safe: JSON-deserialized Variants lists can contain null entries (e.g., `["alice", null]`).
+            if (alias.Variants.Any(v => (v?.Equals(raw, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                                        (v?.Equals(identity.DisplayName, StringComparison.OrdinalIgnoreCase) ?? false)))
                 return alias.CanonicalKey;
         }
 

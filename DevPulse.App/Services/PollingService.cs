@@ -18,6 +18,7 @@ public sealed class PollingService : PollingLoopBase
     private readonly EventCollapser _collapser = new();
     private readonly MuteService _muteService = new();
     private readonly EventNormalizer _eventNorm = new();
+    private static bool s_warnedNoSystemInbox;
 
     public PollingService(
         IAzureDevOpsClient adoClient,
@@ -37,6 +38,7 @@ public sealed class PollingService : PollingLoopBase
 
     protected override async Task ExecutePollAsync(CancellationToken ct)
     {
+        var pollStart = DateTimeOffset.UtcNow;
         var apiCallCount = 0;
         var appSettings = await _settings.GetAppSettingsAsync();
         var inboxes = await _settings.GetInboxDefinitionsAsync();
@@ -49,11 +51,23 @@ public sealed class PollingService : PollingLoopBase
         var idNorm = new IdentityNormalizer(aliases, appSettings.BotIdentityPatterns);
 
         var prs = await _adoClient.GetRelevantPullRequestsAsync(ct);
-        prs = prs.DistinctBy(pr => pr.PullRequestId).ToList();
+        // Tuple-dedup by (PrId, RepositoryId) — defensive against API changes or cross-project polling
+        // where PR IDs could collide. ADO project-scoped IDs make this equivalent to PrId-only in practice.
+        prs = prs.DistinctBy(pr => (pr.PullRequestId, pr.RepositoryId)).ToList();
+
+        // Drop PRs that closed outside the lookback window so first-poll on a long-lived repo doesn't
+        // flood the inbox with years of historical merges. Active PRs (no ClosedDate) always stay.
+        if (appSettings.PrLookbackDays > 0)
+        {
+            var cutoff = DateTimeOffset.UtcNow.AddDays(-appSettings.PrLookbackDays);
+            prs = prs.Where(pr => pr.ClosedDate == null || pr.ClosedDate.Value >= cutoff).ToList();
+        }
         apiCallCount++;
 
         var allNewEvents = new List<DevOpsEvent>();
-        var pollTime = DateTimeOffset.UtcNow;
+        // Event discovery timestamp — used for DiscoveredAtUtc on events and as a fallback
+        // CreatedAtUtc for votes/reviewer-added (ADO doesn't expose vote timestamps).
+        var eventDiscoveryTime = DateTimeOffset.UtcNow;
 
         // Gather per-PR snapshot data and status/vote events
         var prSnapshots = new List<(PullRequestDto Pr, string? PrevStatus, string? PrevVotesJson, Dictionary<string, int> CurrVotes)>();
@@ -62,6 +76,7 @@ public sealed class PollingService : PollingLoopBase
 
         foreach (var pr in prs)
         {
+            ct.ThrowIfCancellationRequested();
             existingSnapshots.TryGetValue(pr.PullRequestId, out var snap);
             var prevStatus = snap.Status;
             var prevVotesJson = snap.VotesJson;
@@ -74,33 +89,37 @@ public sealed class PollingService : PollingLoopBase
             {
                 var meaning = _eventNorm.DeriveStatusMeaning(pr.Status);
                 if (meaning != EventMeaning.Unknown)
-                    allNewEvents.Add(BuildStatusEvent(pr, meaning, appSettings, idNorm, pollTime));
+                    allNewEvents.Add(BuildStatusEvent(pr, meaning, appSettings, idNorm, eventDiscoveryTime));
             }
 
             if (prevVotesJson != null)
             {
-                Dictionary<string, int> prevVotes;
-                try { prevVotes = JsonSerializer.Deserialize<Dictionary<string, int>>(prevVotesJson) ?? []; }
+                Dictionary<string, int>? prevVotes;
+                try { prevVotes = JsonSerializer.Deserialize<Dictionary<string, int>>(prevVotesJson); }
                 catch (JsonException ex)
                 {
-                    Log.Warning(ex, "PR {PrId} had corrupt vote snapshot; treating as empty", pr.PullRequestId);
-                    prevVotes = [];
+                    Log.Warning(ex, "PR {PrId} had corrupt vote snapshot; skipping vote/reviewer events until next snapshot", pr.PullRequestId);
+                    prevVotes = null;
                 }
-                foreach (var reviewer in pr.Reviewers)
+                if (prevVotes != null)
                 {
-                    if (string.IsNullOrEmpty(reviewer.Id)) continue;
-                    if (prevVotes.TryGetValue(reviewer.Id, out var prevVote) && prevVote != reviewer.Vote)
-                        allNewEvents.Add(BuildVoteEvent(pr, reviewer, appSettings, idNorm, pollTime));
-                    else if (!prevVotes.ContainsKey(reviewer.Id))
-                        allNewEvents.Add(BuildReviewerAddedEvent(pr, reviewer, appSettings, idNorm, pollTime));
+                    foreach (var reviewer in pr.Reviewers)
+                    {
+                        if (string.IsNullOrEmpty(reviewer.Id)) continue;
+                        if (prevVotes.TryGetValue(reviewer.Id, out var prevVote) && prevVote != reviewer.Vote)
+                            allNewEvents.Add(BuildVoteEvent(pr, reviewer, appSettings, idNorm, eventDiscoveryTime));
+                        else if (!prevVotes.ContainsKey(reviewer.Id))
+                            allNewEvents.Add(BuildReviewerAddedEvent(pr, reviewer, appSettings, idNorm, eventDiscoveryTime));
+                    }
                 }
             }
 
             prSnapshots.Add((pr, prevStatus, prevVotesJson, currVotes));
         }
 
-        // Parallel bounded thread fetch
-        using var fetchSemaphore = new SemaphoreSlim(4, 4);
+        // Parallel bounded thread fetch — parallelism configurable via AppSettings.
+        var parallelism = Math.Clamp(appSettings.PrThreadFetchParallelism, 1, 16);
+        using var fetchSemaphore = new SemaphoreSlim(parallelism, parallelism);
         var threadTasks = prs.Select(async pr =>
         {
             await fetchSemaphore.WaitAsync(ct);
@@ -134,15 +153,22 @@ public sealed class PollingService : PollingLoopBase
         var allCandidateIds = candidateCommentIds.Concat(candidateStatusVoteIds).ToList();
         var existingIds = await _store.GetExistingEventIdsAsync(allCandidateIds, ct);
 
-        // Build comment events (skip already-known), save snapshots
-        var snapshotsByPrId = prSnapshots.ToDictionary(s => s.Pr.PullRequestId);
+        // Build comment events (skip already-known); snapshots batched after the loop.
+        // Key by (PrId, RepositoryId) to match the tuple-dedup on line 54 — two repos in the same
+        // project could legitimately share a PR number under some ADO deployments.
+        var snapshotsByPrKey = prSnapshots.ToDictionary(s => (s.Pr.PullRequestId, s.Pr.RepositoryId));
+        var snapshotBatch = new List<(int, string, string)>();
         foreach (var (pr, threads) in prWithThreads)
         {
-            var snapshotEntry = snapshotsByPrId[pr.PullRequestId];
-            await _store.SavePrSnapshotAsync(pr.PullRequestId, pr.Status, JsonSerializer.Serialize(snapshotEntry.CurrVotes), ct);
+            var snapshotEntry = snapshotsByPrKey[(pr.PullRequestId, pr.RepositoryId)];
+            snapshotBatch.Add((pr.PullRequestId, pr.Status, JsonSerializer.Serialize(snapshotEntry.CurrVotes)));
 
-            var currentUserIsReviewer = pr.Reviewers.Any(r =>
-                !string.IsNullOrEmpty(r.UniqueName) && r.UniqueName.Equals(appSettings.CurrentUserCanonicalKey, StringComparison.OrdinalIgnoreCase));
+            // First-seen PRs seed their snapshot silently and don't emit historical comment events.
+            // Mirrors the prevStatus/prevVotesJson null-guards used for status and vote events above.
+            var isFirstSeen = snapshotEntry.PrevStatus == null && snapshotEntry.PrevVotesJson == null;
+            if (isFirstSeen) continue;
+
+            var currentUserIsReviewer = IsCurrentUserReviewer(pr, idNorm, appSettings.CurrentUserCanonicalKey);
 
             foreach (var thread in threads)
             {
@@ -173,7 +199,7 @@ public sealed class PollingService : PollingLoopBase
                         MessageText = comment.Content,
                         Status = pr.Status,
                         CreatedAtUtc = comment.PublishedDate,
-                        DiscoveredAtUtc = pollTime,
+                        DiscoveredAtUtc = eventDiscoveryTime,
                         SourceThreadId = thread.Id.ToString(),
                         SourceCommentId = comment.Id.ToString(),
                         IsCurrentUserReviewer = currentUserIsReviewer
@@ -185,29 +211,80 @@ public sealed class PollingService : PollingLoopBase
         // Filter already-known status/vote events using the batch result
         var newEvents = allNewEvents.Where(evt => !existingIds.Contains(evt.EventId)).ToList();
 
-        var unmuted = _muteService.Filter(newEvents, activeMutes, pollTime);
-        var collapsed = _collapser.Collapse(unmuted, pollTime);
+        // Mute before collapse (deliberate deviation from spec): filter out muted events first so the
+        // collapser doesn't waste work forming summaries that would be suppressed anyway. End behaviour
+        // is equivalent for typical bot-author mutes (all bot comments share one author, so the collapsed
+        // row would be muted too). Change the order only if you need the UI to reflect "muted group of N".
+        var unmuted = _muteService.Filter(newEvents, activeMutes, eventDiscoveryTime);
+        var collapsed = _collapser.Collapse(unmuted);
 
-        if (!inboxes.Any(i => i.IsSystemInbox))
+        if (!inboxes.Any(i => i.IsSystemInbox) && !s_warnedNoSystemInbox)
+        {
             Log.Warning("Poll '{Track}': no system inbox configured — NeedsMyAttention events will not be routed", TrackName);
+            s_warnedNoSystemInbox = true;
+        }
+
+        // Re-fetch inboxes immediately before assignment so a concurrent rename/delete during the
+        // poll cycle (e.g., user saved Settings mid-poll) doesn't orphan new events under a
+        // stale inbox name. A tiny race window remains between re-fetch and save; acceptable at MINOR.
+        var freshInboxes = await _settings.GetInboxDefinitionsAsync(ct);
+        var freshWatchers = await _settings.GetWatchersAsync(ct);
+        var freshPacks = await _settings.GetKeywordPacksAsync(ct);
+        var freshSettings = await _settings.GetAppSettingsAsync(ct);
+        var freshAliases = await _settings.GetIdentityAliasesAsync(ct);
+        var freshIdNorm = new IdentityNormalizer(freshAliases, freshSettings.BotIdentityPatterns);
+
+        // Recompute IsCurrentUserReviewer using fresh settings — the flag baked into each event
+        // during build used the poll-start CurrentUserCanonicalKey. A mid-cycle Settings edit would
+        // otherwise feed a stale flag into RuleEngine.MatchesNeedsMyAttention.
+        var prsByEventKey = prs
+            .GroupBy(p => (p.PullRequestId, p.RepositoryName))
+            .ToDictionary(g => g.Key, g => g.First());
+        foreach (var evt in collapsed)
+        {
+            if (prsByEventKey.TryGetValue((evt.PullRequestId, evt.Repository), out var pr))
+                evt.IsCurrentUserReviewer = IsCurrentUserReviewer(pr, freshIdNorm, freshSettings.CurrentUserCanonicalKey);
+        }
 
         foreach (var evt in collapsed)
         {
-            var (inboxName, ruleDescription) = _ruleEngine.AssignInbox(evt, watchers, inboxes, packs, appSettings);
+            var (inboxName, ruleDescription) = _ruleEngine.AssignInbox(evt, freshWatchers, freshInboxes, freshPacks, freshSettings);
             evt.InboxName = inboxName;
             evt.MatchedRuleDescription = ruleDescription;
             _debugLog.RecordEvent(evt);
         }
 
+        var preSaveExisting = await _store.GetExistingEventIdsAsync(collapsed.Select(e => e.EventId), ct);
         await _store.SaveEventsAsync(collapsed, ct);
 
+        // Save snapshots AFTER events: if we crash between these calls, the next poll will read the old
+        // snapshots, recompute the same diffs, and rebuild the events — dedup catches the duplicates.
+        // The reverse order would lose events on crash (snapshots updated → no diff → nothing to replay).
+        await _store.SavePrSnapshotsAsync(snapshotBatch, ct);
+
+        // Only query is_read carry-over if any multi-item collapse happened; otherwise no row could have inherited read state.
+        var hasCollapsed = collapsed.Any(e => e.CollapsedCount > 1);
+        HashSet<string> inheritedReadIds = [];
+        if (hasCollapsed)
+        {
+            var newEventIds = collapsed.Where(e => !preSaveExisting.Contains(e.EventId)).Select(e => e.EventId).ToList();
+            if (newEventIds.Count > 0)
+                inheritedReadIds = await _store.GetReadEventIdsAsync(newEventIds, ct);
+        }
+
+        var totalCandidateCount = candidateCommentIds.Count + candidateStatusVoteIds.Count;
         Log.Information("Poll 'prs': {PrCount} PRs, {Candidates} candidate events, {New} new, {Muted} muted, {Saved} saved",
-            prs.Count, allNewEvents.Count, newEvents.Count, newEvents.Count - unmuted.Count, collapsed.Count);
+            prs.Count, totalCandidateCount, newEvents.Count, newEvents.Count - unmuted.Count, collapsed.Count - preSaveExisting.Count);
 
         var notifiedIds = new List<string>();
         foreach (var evt in collapsed)
         {
-            var inbox = inboxes.FirstOrDefault(i => i.Name.Equals(evt.InboxName, StringComparison.OrdinalIgnoreCase));
+            if (preSaveExisting.Contains(evt.EventId)) continue;
+            if (inheritedReadIds.Contains(evt.EventId)) continue;
+
+            // Use freshInboxes (same snapshot used to assign evt.InboxName). Looking up in the
+            // original poll-start snapshot would miss the inbox if a rename happened mid-cycle.
+            var inbox = freshInboxes.FirstOrDefault(i => i.Name.Equals(evt.InboxName, StringComparison.OrdinalIgnoreCase));
             if (inbox?.ShowNotifications == true)
             {
                 try
@@ -221,11 +298,10 @@ public sealed class PollingService : PollingLoopBase
         if (notifiedIds.Count > 0)
             await _store.MarkNotificationSentAsync(notifiedIds, ct);
 
-        await _store.CleanStaleSnapshotsAsync(30, ct);
+        await _store.CleanStaleSnapshotsAsync(prIdList, 30, ct);
 
-        var now = DateTimeOffset.UtcNow;
-        await _store.SetLastSuccessfulPollAsync("prs", now, ct);
-        _debugLog.UpdatePollStatus("prs", now, now.AddMinutes(appSettings.PrPollingIntervalMinutes), apiCallCount);
+        await _store.SetLastSuccessfulPollAsync("prs", pollStart, ct);
+        _debugLog.UpdatePollStatus("prs", pollStart, pollStart.AddMinutes(appSettings.PrPollingIntervalMinutes), apiCallCount);
     }
 
     protected override async Task OnPollFailedAsync(Exception ex, CancellationToken ct)
@@ -233,12 +309,12 @@ public sealed class PollingService : PollingLoopBase
         _debugLog.UpdatePollStatus("prs", await _store.GetLastSuccessfulPollAsync("prs", ct), null, 0, PollErrorClassifier.Classify(ex));
     }
 
-    private DevOpsEvent BuildStatusEvent(PullRequestDto pr, EventMeaning meaning, AppSettings settings, IdentityNormalizer idNorm, DateTimeOffset pollTime)
+    private DevOpsEvent BuildStatusEvent(PullRequestDto pr, EventMeaning meaning, AppSettings settings, IdentityNormalizer idNorm, DateTimeOffset eventDiscoveryTime)
     {
-        var actor = pr.CompletedBy ?? pr.CreatedBy;
+        var actor = pr.CompletedBy ?? pr.CreatedBy ?? new IdentityRefDto();
         return new DevOpsEvent
         {
-            EventId = _eventNorm.BuildStatusEventId(pr.PullRequestId, pr.Status, pr.ClosedDate ?? pollTime),
+            EventId = _eventNorm.BuildStatusEventId(pr.PullRequestId, pr.Status, pr.ClosedDate ?? eventDiscoveryTime),
             EventType = meaning == EventMeaning.Merged ? DevOpsEventType.PullRequestCompleted : DevOpsEventType.PullRequestAbandoned,
             EventSource = idNorm.ClassifySource(actor),
             EventMeaning = meaning,
@@ -248,22 +324,22 @@ public sealed class PollingService : PollingLoopBase
             Organization = pr.Organization,
             Project = pr.Project,
             Repository = pr.RepositoryName,
-            AuthorDisplayName = actor.DisplayName,
+            AuthorDisplayName = actor.DisplayName ?? string.Empty,
             AuthorCanonicalKey = idNorm.Normalize(actor),
             Status = pr.Status,
-            CreatedAtUtc = pr.ClosedDate ?? pollTime,
-            DiscoveredAtUtc = pollTime,
-            IsCurrentUserReviewer = pr.Reviewers.Any(r => !string.IsNullOrEmpty(r.UniqueName) && r.UniqueName.Equals(settings.CurrentUserCanonicalKey, StringComparison.OrdinalIgnoreCase))
+            CreatedAtUtc = pr.ClosedDate ?? eventDiscoveryTime,
+            DiscoveredAtUtc = eventDiscoveryTime,
+            IsCurrentUserReviewer = IsCurrentUserReviewer(pr, idNorm, settings.CurrentUserCanonicalKey)
         };
     }
 
-    private DevOpsEvent BuildVoteEvent(PullRequestDto pr, ReviewerDto reviewer, AppSettings settings, IdentityNormalizer idNorm, DateTimeOffset pollTime)
+    private DevOpsEvent BuildVoteEvent(PullRequestDto pr, ReviewerDto reviewer, AppSettings settings, IdentityNormalizer idNorm, DateTimeOffset eventDiscoveryTime)
     {
         var identity = reviewer.AsIdentityRef();
         var meaning = _eventNorm.DeriveVoteMeaning(reviewer.Vote);
         return new DevOpsEvent
         {
-            EventId = _eventNorm.BuildVoteEventId(pr.PullRequestId, reviewer.Id, reviewer.Vote, pollTime),
+            EventId = _eventNorm.BuildVoteEventId(pr.PullRequestId, reviewer.Id, reviewer.Vote, eventDiscoveryTime),
             EventType = DevOpsEventType.ReviewerVoteChanged,
             EventSource = idNorm.ClassifySource(identity),
             EventMeaning = meaning,
@@ -277,13 +353,13 @@ public sealed class PollingService : PollingLoopBase
             AuthorCanonicalKey = idNorm.Normalize(identity),
             MessageText = $"Vote: {reviewer.Vote}",
             Status = pr.Status,
-            CreatedAtUtc = pollTime,
-            DiscoveredAtUtc = pollTime,
-            IsCurrentUserReviewer = pr.Reviewers.Any(r => !string.IsNullOrEmpty(r.UniqueName) && r.UniqueName.Equals(settings.CurrentUserCanonicalKey, StringComparison.OrdinalIgnoreCase))
+            CreatedAtUtc = eventDiscoveryTime,
+            DiscoveredAtUtc = eventDiscoveryTime,
+            IsCurrentUserReviewer = IsCurrentUserReviewer(pr, idNorm, settings.CurrentUserCanonicalKey)
         };
     }
 
-    private DevOpsEvent BuildReviewerAddedEvent(PullRequestDto pr, ReviewerDto reviewer, AppSettings settings, IdentityNormalizer idNorm, DateTimeOffset pollTime)
+    private DevOpsEvent BuildReviewerAddedEvent(PullRequestDto pr, ReviewerDto reviewer, AppSettings settings, IdentityNormalizer idNorm, DateTimeOffset eventDiscoveryTime)
     {
         var identity = reviewer.AsIdentityRef();
         return new DevOpsEvent
@@ -301,9 +377,20 @@ public sealed class PollingService : PollingLoopBase
             AuthorDisplayName = reviewer.DisplayName,
             AuthorCanonicalKey = idNorm.Normalize(identity),
             Status = pr.Status,
-            CreatedAtUtc = pollTime,
-            DiscoveredAtUtc = pollTime,
-            IsCurrentUserReviewer = !string.IsNullOrEmpty(reviewer.UniqueName) && reviewer.UniqueName.Equals(settings.CurrentUserCanonicalKey, StringComparison.OrdinalIgnoreCase)
+            CreatedAtUtc = eventDiscoveryTime,
+            DiscoveredAtUtc = eventDiscoveryTime,
+            IsCurrentUserReviewer = IsCurrentUserReviewer(pr, idNorm, settings.CurrentUserCanonicalKey)
         };
+    }
+
+    private static bool IsCurrentUserReviewer(PullRequestDto pr, IdentityNormalizer idNorm, string canonicalKey)
+    {
+        if (string.IsNullOrEmpty(canonicalKey)) return false;
+        return pr.Reviewers.Any(r =>
+        {
+            var normalized = idNorm.Normalize(r.AsIdentityRef());
+            return !string.IsNullOrEmpty(normalized) &&
+                   normalized.Equals(canonicalKey, StringComparison.OrdinalIgnoreCase);
+        });
     }
 }

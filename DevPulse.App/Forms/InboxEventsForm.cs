@@ -21,7 +21,7 @@ public sealed partial class InboxEventsForm : Form
     private readonly BoardForm? _boardForm;
     private readonly CancellationTokenSource _formCts = new();
 
-    private bool _loading;
+    private int _loading;
 
     public InboxEventsForm(
         InboxViewService viewService,
@@ -55,11 +55,15 @@ public sealed partial class InboxEventsForm : Form
 
     private async Task LoadEventsAsync()
     {
-        if (_loading) return;
-        _loading = true;
+        if (Interlocked.CompareExchange(ref _loading, 1, 0) != 0) return;
+        var originalRefreshText = _btnRefresh.Text;
         try
         {
-            var events = await _viewService.GetLatestAsync(_inboxName, 100, _formCts.Token);
+            _btnRefresh.Enabled = false;
+            _btnRefresh.Text = "Loading…";
+            var inboxes = await _settings.GetInboxDefinitionsAsync(_formCts.Token);
+            var max = inboxes.FirstOrDefault(i => i.Name.Equals(_inboxName, StringComparison.OrdinalIgnoreCase))?.MaxItemsToRetain ?? 100;
+            var events = await _viewService.GetLatestAsync(_inboxName, max, _formCts.Token);
             if (IsDisposed) return;
             try
             {
@@ -96,7 +100,15 @@ public sealed partial class InboxEventsForm : Form
             }
             catch (ObjectDisposedException) { return; }
         }
-        finally { _loading = false; }
+        finally
+        {
+            if (!IsDisposed)
+            {
+                _btnRefresh.Text = originalRefreshText;
+                _btnRefresh.Enabled = true;
+            }
+            Volatile.Write(ref _loading, 0);
+        }
     }
 
     private void OnDoubleClick(object? sender, MouseEventArgs e)
@@ -156,10 +168,22 @@ public sealed partial class InboxEventsForm : Form
     private static void OpenWorkItem(DevOpsEvent evt)
     {
         if (string.IsNullOrEmpty(evt.LinkedWorkItemId)) return;
-        if (!Uri.TryCreate(evt.PullRequestUrl, UriKind.Absolute, out var uri)) return;
+        if (!Uri.TryCreate(evt.PullRequestUrl, UriKind.Absolute, out var uri))
+        {
+            Log.Warning("OpenWorkItem: PR URL is not a valid absolute URI: {Url}", evt.PullRequestUrl);
+            MessageBox.Show("Could not open work item — the PR URL is not a valid absolute URI.",
+                "DevPulse", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
 
         var gitIdx = uri.AbsolutePath.IndexOf("/_git/", StringComparison.Ordinal);
-        if (gitIdx < 0) return;
+        if (gitIdx < 0)
+        {
+            Log.Warning("OpenWorkItem: PR URL does not contain '/_git/' segment; unsupported ADO layout: {Url}", evt.PullRequestUrl);
+            MessageBox.Show($"Could not determine work item URL from PR URL format.\n\nExpected URL to contain '/_git/'.\nGot: {evt.PullRequestUrl}",
+                "DevPulse", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
 
         var baseUrl = $"{uri.Scheme}://{uri.Host}{uri.AbsolutePath[..gitIdx]}";
         var url = $"{baseUrl}/_workitems/edit/{evt.LinkedWorkItemId}";
@@ -182,8 +206,7 @@ public sealed partial class InboxEventsForm : Form
 
     private async Task MarkAllReadAsync()
     {
-        var events = await _viewService.GetLatestAsync(_inboxName, int.MaxValue, _formCts.Token);
-        await _viewService.MarkReadAsync(events.Select(e => e.EventId), _formCts.Token);
+        await _store.MarkInboxReadAsync(_inboxName, _formCts.Token);
         await LoadEventsAsync();
     }
 

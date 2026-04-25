@@ -1,3 +1,4 @@
+using DevPulse.App.Services;
 using DevPulse.Core.Services;
 
 namespace DevPulse.App.Forms;
@@ -8,10 +9,14 @@ public sealed partial class DebugWindow : Form
     private static readonly Color TextPrimary = Color.FromArgb(220, 220, 235);
 
     private readonly DebugLogService _debugLog;
+    private readonly SettingsService _settings;
+    private int _displayCount = 500;
+    private int _errorDisplayCount = 100;
 
-    public DebugWindow(DebugLogService debugLog)
+    public DebugWindow(DebugLogService debugLog, SettingsService settings)
     {
         _debugLog = debugLog;
+        _settings = settings;
         InitializeComponent();
         _tabs.TabPages.Add(BuildPollStatusTab());
         _tabs.TabPages.Add(BuildEventLogTab());
@@ -103,6 +108,14 @@ public sealed partial class DebugWindow : Form
         var events = _debugLog.GetRecentEvents();
         var pollStatus = _debugLog.GetPollStatus();
 
+        // Pull display count from settings (cached per refresh) — configurable for future tiers.
+        var settingsTask = _settings.GetAppSettingsAsync();
+        if (settingsTask.IsCompletedSuccessfully)
+        {
+            _displayCount = Math.Max(10, settingsTask.Result.DebugWindowDisplayCount);
+            _errorDisplayCount = Math.Min(_displayCount, 100);
+        }
+
         // Poll status tab
         var pollGrid = FindGrid(_tabs.TabPages[0], "poll");
         if (pollGrid != null)
@@ -117,7 +130,7 @@ public sealed partial class DebugWindow : Form
         if (evtGrid != null)
         {
             evtGrid.Rows.Clear();
-            foreach (var e in events.TakeLast(200))
+            foreach (var e in events.TakeLast(_displayCount))
                 evtGrid.Rows.Add(e.Timestamp.ToLocalTime().ToString("HH:mm:ss"), e.EventId, e.AuthorCanonicalKey, e.EventSource, e.EventMeaning, e.InboxAssigned, e.RuleMatched);
         }
 
@@ -126,7 +139,7 @@ public sealed partial class DebugWindow : Form
         if (traceGrid != null)
         {
             traceGrid.Rows.Clear();
-            foreach (var e in events.TakeLast(200))
+            foreach (var e in events.TakeLast(_displayCount))
                 traceGrid.Rows.Add(e.Timestamp.ToLocalTime().ToString("HH:mm:ss"), e.EventId, e.InboxAssigned, e.RuleMatched);
         }
 
@@ -135,7 +148,7 @@ public sealed partial class DebugWindow : Form
         if (idGrid != null)
         {
             idGrid.Rows.Clear();
-            foreach (var e in events.TakeLast(200))
+            foreach (var e in events.TakeLast(_displayCount))
                 idGrid.Rows.Add(e.Timestamp.ToLocalTime().ToString("HH:mm:ss"), e.EventId, e.AuthorCanonicalKey, e.EventSource);
         }
 
@@ -144,7 +157,7 @@ public sealed partial class DebugWindow : Form
         if (muteGrid != null)
         {
             muteGrid.Rows.Clear();
-            foreach (var e in events.Where(x => x.ErrorMessage != null).TakeLast(100))
+            foreach (var e in events.Where(x => x.ErrorMessage != null).TakeLast(_errorDisplayCount))
                 muteGrid.Rows.Add(e.Timestamp.ToLocalTime().ToString("HH:mm:ss"), e.EventId, e.ErrorMessage);
         }
     }

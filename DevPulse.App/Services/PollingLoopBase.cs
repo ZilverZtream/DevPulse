@@ -52,7 +52,9 @@ public abstract class PollingLoopBase : IDisposable, IAsyncDisposable
             ct.ThrowIfCancellationRequested();
             await ExecutePollAsync(ct).ConfigureAwait(false);
             _lastPollFailed = false;
-            PollCompleted?.Invoke(this, EventArgs.Empty);
+            // Guard handler — if a subscriber throws, it's a UI bug, not a poll failure
+            try { PollCompleted?.Invoke(this, EventArgs.Empty); }
+            catch (Exception handlerEx) { Log.Warning(handlerEx, "{Track} PollCompleted handler threw", TrackName); }
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
@@ -84,6 +86,9 @@ public abstract class PollingLoopBase : IDisposable, IAsyncDisposable
 
     public void Dispose()
     {
-        DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(10));
+        // Keep the sync wait short — this Dispose path runs on the UI thread during
+        // WinForms Application.Exit. TrayApplicationContext orchestrates async cleanup
+        // via Application.ApplicationExit; this is only a backstop.
+        DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(2));
     }
 }

@@ -6,6 +6,7 @@ public interface IAzureDevOpsClient
 {
     Task<IReadOnlyList<PullRequestDto>> GetRelevantPullRequestsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<PullRequestThreadDto>> GetPullRequestThreadsAsync(int prId, string repoId, CancellationToken ct = default);
+    Task<IdentityRefDto?> GetAuthenticatedUserAsync(CancellationToken ct = default);
 }
 
 public sealed class PullRequestDto

@@ -87,6 +87,7 @@ public sealed class BoardColumnPanel : Panel
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);
+        if (_cardContainer is null) return;
         foreach (Control c in _cardContainer.Controls)
             c.Width = _cardContainer.Width - 20;
     }

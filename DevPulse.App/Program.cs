@@ -15,6 +15,12 @@ Log.Logger = new LoggerConfiguration()
     .WriteTo.File(logPath, rollingInterval: RollingInterval.Day, retainedFileCountLimit: 7)
     .CreateLogger();
 
+TaskScheduler.UnobservedTaskException += (_, e) =>
+{
+    Log.Error(e.Exception, "Unobserved task exception");
+    e.SetObserved();
+};
+
 try
 {
     var store = new SqliteStateStore(DbSchema.DbPath);

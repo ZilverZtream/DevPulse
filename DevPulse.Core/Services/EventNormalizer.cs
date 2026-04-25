@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using DevPulse.Core.Enums;
 using DevPulse.Core.Interfaces;
 using DevPulse.Core.Models;
@@ -8,9 +10,8 @@ public sealed class EventNormalizer
 {
     public EventMeaning DeriveCommentMeaning(string messageText, string currentUserCanonicalKey, string currentUserDisplayName = "")
     {
-        var mentionHandle = currentUserCanonicalKey.Contains('@')
-            ? currentUserCanonicalKey.Split('@')[0]
-            : currentUserCanonicalKey;
+        var atIdx = currentUserCanonicalKey.LastIndexOf('@');
+        var mentionHandle = atIdx > 0 ? currentUserCanonicalKey[..atIdx] : currentUserCanonicalKey;
 
         if (!string.IsNullOrEmpty(mentionHandle) &&
             messageText.Contains($"@{mentionHandle}", StringComparison.OrdinalIgnoreCase))
@@ -51,6 +52,10 @@ public sealed class EventNormalizer
     public string BuildVoteEventId(int prId, string reviewerId, int vote, DateTimeOffset at)
         => $"pr:{prId}:reviewer:{reviewerId}:vote:{vote}:at:{at:yyyyMMddHHmmss}";
 
-    public string BuildCollapsedEventId(int prId, PrEventSource source, DateTimeOffset pollTime)
-        => $"pr:{prId}:collapsed:{source}:poll:{pollTime:yyyyMMddHHmm}";
+    public string BuildCollapsedEventId(int prId, PrEventSource source, IEnumerable<string> constituentIds)
+    {
+        var joined = string.Join("|", constituentIds.OrderBy(x => x, StringComparer.Ordinal));
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(joined)));
+        return $"pr:{prId}:collapsed:{source}:{hash}";
+    }
 }

@@ -1,6 +1,5 @@
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using DevPulse.Core.Interfaces;
 using DevPulse.Core.Services;
 using Serilog;
@@ -13,11 +12,7 @@ public sealed class WorkItemClient : IWorkItemClient
     private readonly string _orgUrl;
     private readonly string _project;
 
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
+    private static readonly JsonSerializerOptions JsonOpts = SharedJsonOptions.AdoResponse;
 
     private const string Fields = "System.Id,System.Title,System.WorkItemType,System.State,Microsoft.VSTS.Common.Priority," +
                                   "System.AssignedTo,System.AreaPath,System.IterationPath,System.StateChangeDate,System.TeamProject";
@@ -64,8 +59,8 @@ public sealed class WorkItemClient : IWorkItemClient
                 break;
             }
             var url = $"{_orgUrl}/{Uri.EscapeDataString(_project)}/_apis/wit/wiql?$top={pageSize}&$skip={skip}&api-version={ApiVersions.WorkItemQueryLanguage}";
-            var content = new StringContent(serializedBody, Encoding.UTF8, "application/json");
-            var response = await AdoRetryHelper.PostWithRetryAsync(_http, url, content, ct);
+            using var content = new StringContent(serializedBody, Encoding.UTF8, "application/json");
+            using var response = await AdoRetryHelper.PostWithRetryAsync(_http, url, content, ct);
 
             var body = await response.Content.ReadAsStringAsync(ct);
             var result = JsonSerializer.Deserialize<WiqlResult>(body, JsonOpts);
@@ -77,6 +72,13 @@ public sealed class WorkItemClient : IWorkItemClient
             pageIndex++;
         }
 
+        // Warn when approaching the hard cap, not only when we hit it exactly — gives the user
+        // signal to narrow their area path before silent truncation.
+        var hardCap = maxPages * pageSize;
+        if (allIds.Count >= (int)(hardCap * 0.9))
+            Log.Warning("WorkItemClient: WIQL returned {Count} items for area path {Area} — approaching the hard cap of {Cap}. Consider narrowing the area path.",
+                allIds.Count, areaPath, hardCap);
+
         return allIds;
     }
 
@@ -87,7 +89,7 @@ public sealed class WorkItemClient : IWorkItemClient
         {
             var idList = string.Join(",", chunk);
             var url = $"{_orgUrl}/_apis/wit/workitems?ids={idList}&fields={Fields}&$expand=relations&api-version={ApiVersions.WorkItemsBatch}";
-            var response = await AdoRetryHelper.GetWithRetryAsync(_http, url, ct);
+            using var response = await AdoRetryHelper.GetWithRetryAsync(_http, url, ct);
 
             var body = await response.Content.ReadAsStringAsync(ct);
             var result = JsonSerializer.Deserialize<AdoListResponse<AdoWorkItem>>(body, JsonOpts);

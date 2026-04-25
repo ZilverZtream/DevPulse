@@ -13,6 +13,7 @@ public sealed partial class WorkItemNormalizer
     private static partial Regex WorkItemRefRegex();
 
     private static readonly ConcurrentDictionary<int, bool> _warnedNoUniqueName = new();
+    private static readonly ConcurrentDictionary<string, bool> _warnedUnknownType = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, WorkItemType> TypeMap = new(StringComparer.OrdinalIgnoreCase)
     {
         ["Feature"] = WorkItemType.Feature,
@@ -42,11 +43,16 @@ public sealed partial class WorkItemNormalizer
             && _warnedNoUniqueName.TryAdd(dto.Id, true))
             Log.Debug("WorkItem {Id} has no UniqueName; using display name '{Name}' as canonical key — mutes may be orphaned on rename", dto.Id, dto.AssignedToDisplayName);
 
+        var resolvedType = TypeMap.GetValueOrDefault(dto.WorkItemType, WorkItemType.Unknown);
+        if (resolvedType == WorkItemType.Unknown && !string.IsNullOrEmpty(dto.WorkItemType)
+            && _warnedUnknownType.TryAdd(dto.WorkItemType, true))
+            Log.Debug("WorkItemNormalizer: unknown ADO work item type '{Type}' on item {Id} — mapping to Unknown", dto.WorkItemType, dto.Id);
+
         return new WorkItem
         {
             Id = dto.Id,
             Title = dto.Title,
-            Type = TypeMap.GetValueOrDefault(dto.WorkItemType, WorkItemType.Unknown),
+            Type = resolvedType,
             State = dto.State,
             BoardColumn = column?.Name ?? string.Empty,
             Priority = dto.Priority,

@@ -27,8 +27,8 @@ public sealed class WorkItemPollingService : PollingLoopBase
 
     protected override async Task ExecutePollAsync(CancellationToken ct)
     {
-        var appSettings = await _settings.GetAppSettingsAsync();
-        var columns = await _settings.GetBoardColumnsAsync();
+        var appSettings = await _settings.GetAppSettingsAsync(ct);
+        var columns = await _settings.GetBoardColumnsAsync(ct);
         var now = DateTimeOffset.UtcNow;
 
         var dtos = await _client.GetWorkItemsAsync(appSettings.AreaPath, appSettings.IterationPath, ct);

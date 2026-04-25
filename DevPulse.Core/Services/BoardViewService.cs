@@ -5,6 +5,18 @@ namespace DevPulse.Core.Services;
 
 public sealed class BoardViewService
 {
+    public void RecomputeAging(IReadOnlyList<WorkItem> items, IReadOnlyList<BoardColumnDefinition> columns)
+    {
+        foreach (var item in items)
+        {
+            var col = columns.FirstOrDefault(c => c.MappedStates.Any(s => s.Equals(item.State, StringComparison.OrdinalIgnoreCase)));
+            if (col == null) { item.AgingLevel = AgingLevel.Fresh; continue; }
+            item.AgingLevel = item.DaysInCurrentState >= col.AgingDaysStale ? AgingLevel.Stale
+                            : item.DaysInCurrentState >= col.AgingDaysWarning ? AgingLevel.Warning
+                            : AgingLevel.Fresh;
+        }
+    }
+
     public IReadOnlyDictionary<string, IReadOnlyList<WorkItem>> GroupByColumn(
         IReadOnlyList<WorkItem> items,
         IReadOnlyList<BoardColumnDefinition> columns)
@@ -14,7 +26,7 @@ public sealed class BoardViewService
         {
             result[col.Name] = items
                 .Where(i => i.BoardColumn.Equals(col.Name, StringComparison.OrdinalIgnoreCase))
-                .OrderBy(i => i.DaysInCurrentState)
+                .OrderByDescending(i => i.DaysInCurrentState)
                 .ToList();
         }
         return result;

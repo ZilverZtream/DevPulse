@@ -2,6 +2,7 @@ using DevPulse.Core.Enums;
 using DevPulse.Core.Models;
 using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
+using Serilog;
 
 namespace DevPulse.Core.Services;
 
@@ -43,13 +44,21 @@ public sealed class RuleEngine
         if (fallback != null)
             return (fallback.Name, "FallbackInbox");
 
-        return ("Unassigned", null);
+        var systemFallback = inboxes.FirstOrDefault(i => i.IsSystemInbox && i.IsEnabled);
+        if (systemFallback != null)
+            return (systemFallback.Name, "SystemFallback");
+
+        // Last resort: route to first enabled inbox (any) to avoid orphaned "Unassigned" rows
+        var anyEnabled = inboxes.FirstOrDefault(i => i.IsEnabled);
+        return anyEnabled != null
+            ? (anyEnabled.Name, "LastResortFallback")
+            : ("Unassigned", null);
     }
 
     private bool MatchesNeedsMyAttention(DevOpsEvent evt, AppSettings settings, IReadOnlyList<KeywordPack> packs)
     {
         if (!evt.IsCurrentUserReviewer) return false;
-        if (evt.EventSource == PrEventSource.Bot || evt.EventSource == PrEventSource.System) return false;
+        if (evt.EventSource == PrEventSource.Bot) return false;
         var msg = evt.MessageText ?? string.Empty;
 
         if (evt.EventMeaning == EventMeaning.Blocked) return true;
@@ -63,7 +72,7 @@ public sealed class RuleEngine
         var attentionPack = packs.FirstOrDefault(p => p.Name.Equals(settings.NeedsAttentionKeywordPackName, StringComparison.OrdinalIgnoreCase));
         if (attentionPack != null)
         {
-            var keywords = ExpandKeywords(attentionPack.Keywords, packs, expandPackRefs: false).ToList();
+            var keywords = ExpandKeywords(attentionPack.Keywords, packs).ToList();
             if (keywords.Any(k => msg.Contains(k, StringComparison.OrdinalIgnoreCase)))
                 return true;
         }
@@ -71,13 +80,35 @@ public sealed class RuleEngine
         return false;
     }
 
-    private static bool MatchesWatcher(DevOpsEvent evt, Watcher watcher) => watcher.Type switch
+    private static readonly HashSet<WatcherType> _warnedUnimplemented = [];
+
+    private static bool MatchesWatcher(DevOpsEvent evt, Watcher watcher)
     {
-        WatcherType.Author => evt.AuthorCanonicalKey.Contains(watcher.MatchValue, StringComparison.OrdinalIgnoreCase),
-        WatcherType.Repository => evt.Repository.Equals(watcher.MatchValue, StringComparison.OrdinalIgnoreCase),
-        WatcherType.PrTitlePattern => MatchesGlob(evt.PullRequestTitle, watcher.MatchValue),
-        _ => false
-    };
+        // Guard empty MatchValue — Contains("") is always true, which would route every event to this watcher.
+        if (string.IsNullOrWhiteSpace(watcher.MatchValue)) return false;
+
+        return watcher.Type switch
+        {
+            // Author uses Equals (strict) for consistency with Repository — prevents false matches
+            // like "evil-alice@corp.com" triggering an "alice@corp.com" watcher. Users who want
+            // substring matching at the rule level have InboxRule.AuthorContains.
+            WatcherType.Author => evt.AuthorCanonicalKey.Equals(watcher.MatchValue, StringComparison.OrdinalIgnoreCase),
+            WatcherType.Repository => evt.Repository.Equals(watcher.MatchValue, StringComparison.OrdinalIgnoreCase),
+            WatcherType.PrTitlePattern => MatchesGlob(evt.PullRequestTitle, watcher.MatchValue),
+            WatcherType.ByWorkItemType or WatcherType.ByWorkItemState => LogUnimplementedWatcher(watcher.Type),
+            _ => false
+        };
+    }
+
+    private static bool LogUnimplementedWatcher(WatcherType type)
+    {
+        lock (_warnedUnimplemented)
+        {
+            if (_warnedUnimplemented.Add(type))
+                Log.Warning("RuleEngine: WatcherType.{Type} is not implemented — watchers of this type will never match. Remove or reconfigure.", type);
+        }
+        return false;
+    }
 
     private static bool MatchesRule(DevOpsEvent evt, InboxRule rule, IReadOnlyList<KeywordPack> packs)
     {
@@ -111,15 +142,19 @@ public sealed class RuleEngine
 
         if (rule.MessageContainsAny?.Count > 0)
         {
-            var keywords = ExpandKeywords(rule.MessageContainsAny, packs);
-            if (!keywords.Any(k => msg.Contains(k, StringComparison.OrdinalIgnoreCase)))
+            var keywords = ExpandKeywords(rule.MessageContainsAny, packs).ToList();
+            // If expansion yielded no keywords (all whitespace or empty pack refs), skip the clause
+            // rather than treating it as "always reject".
+            if (keywords.Count > 0 && !keywords.Any(k => msg.Contains(k, StringComparison.OrdinalIgnoreCase)))
                 return false;
         }
 
         if (rule.MessageContainsAll?.Count > 0)
         {
             var keywords = ExpandKeywords(rule.MessageContainsAll, packs).ToList();
-            if (keywords.Count == 0 || !keywords.All(k => msg.Contains(k, StringComparison.OrdinalIgnoreCase)))
+            // Mirror MessageContainsAny: empty post-expansion skips the clause rather than
+            // treating it as an unsatisfiable filter (e.g., all entries were deleted pack refs).
+            if (keywords.Count > 0 && !keywords.All(k => msg.Contains(k, StringComparison.OrdinalIgnoreCase)))
                 return false;
         }
 
@@ -148,13 +183,21 @@ public sealed class RuleEngine
         }
     }
 
+    private const int MaxGlobCacheSize = 256;
     private static readonly ConcurrentDictionary<string, Regex> GlobCache = new();
+
+    private static Regex CompileGlob(string pattern) =>
+        new("^" + Regex.Escape(pattern).Replace(@"\*", ".*").Replace(@"\?", ".") + "$",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1));
 
     private static bool MatchesGlob(string text, string pattern)
     {
-        var regex = GlobCache.GetOrAdd(pattern, static p =>
-            new Regex("^" + Regex.Escape(p).Replace(@"\*", ".*").Replace(@"\?", ".") + "$",
-                RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1)));
+        if (GlobCache.TryGetValue(pattern, out var cached))
+            return cached.IsMatch(text);
+
+        var regex = CompileGlob(pattern);
+        if (GlobCache.Count < MaxGlobCacheSize)
+            GlobCache.TryAdd(pattern, regex);
         return regex.IsMatch(text);
     }
 
@@ -165,8 +208,14 @@ public sealed class RuleEngine
         if (rule.EventMeaningEquals.HasValue) parts.Add($"EventMeaningEquals={rule.EventMeaningEquals}");
         if (!string.IsNullOrEmpty(rule.AuthorEquals)) parts.Add($"AuthorEquals={rule.AuthorEquals}");
         if (!string.IsNullOrEmpty(rule.AuthorContains)) parts.Add($"AuthorContains={rule.AuthorContains}");
+        if (!string.IsNullOrEmpty(rule.RepositoryEquals)) parts.Add($"RepositoryEquals={rule.RepositoryEquals}");
+        if (!string.IsNullOrEmpty(rule.ProjectEquals)) parts.Add($"ProjectEquals={rule.ProjectEquals}");
+        if (!string.IsNullOrEmpty(rule.StatusEquals)) parts.Add($"StatusEquals={rule.StatusEquals}");
         if (!string.IsNullOrEmpty(rule.ExcludeAuthorContains)) parts.Add($"ExcludeAuthorContains={rule.ExcludeAuthorContains}");
+        if (!string.IsNullOrEmpty(rule.ExcludeMessageContains)) parts.Add($"ExcludeMessageContains={rule.ExcludeMessageContains}");
+        if (!string.IsNullOrEmpty(rule.ExcludeRepositoryEquals)) parts.Add($"ExcludeRepositoryEquals={rule.ExcludeRepositoryEquals}");
         if (rule.MessageContainsAny?.Count > 0) parts.Add($"MessageContainsAny=[{string.Join(",", rule.MessageContainsAny)}]");
+        if (rule.MessageContainsAll?.Count > 0) parts.Add($"MessageContainsAll=[{string.Join(",", rule.MessageContainsAll)}]");
         return string.Join(";", parts) is { Length: > 0 } s ? s : "NoConditions";
     }
 }

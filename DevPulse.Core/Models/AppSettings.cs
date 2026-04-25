@@ -16,6 +16,7 @@ public sealed class AppSettings
     public int DebugLogRetentionCount { get; set; } = 500;
     public int DebugWindowDisplayCount { get; set; } = 500;
     public int PrThreadFetchParallelism { get; set; } = 4;
+    public int PrLookbackDays { get; set; } = 30;
     public List<string> BotIdentityPatterns { get; set; } = ["bot", "coderabbit", "[bot]", "automation"];
     public List<string> PoQaGroupCanonicalKeys { get; set; } = [];
     public string NeedsAttentionKeywordPackName { get; set; } = "needs-attention";

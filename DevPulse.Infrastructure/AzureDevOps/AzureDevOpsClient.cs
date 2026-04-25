@@ -1,8 +1,7 @@
-using System.Net.Http.Headers;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using DevPulse.Core.Interfaces;
 using DevPulse.Core.Models;
+using DevPulse.Core.Services;
 using Serilog;
 
 namespace DevPulse.Infrastructure.AzureDevOps;
@@ -14,11 +13,7 @@ public sealed class AzureDevOpsClient : IAzureDevOpsClient
     private readonly string _project;
     private readonly string _repoFilter;
 
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
+    private static readonly JsonSerializerOptions JsonOpts = SharedJsonOptions.AdoResponse;
 
     public AzureDevOpsClient(HttpClient http, string orgUrl, string project, string repoFilter)
     {
@@ -44,7 +39,7 @@ public sealed class AzureDevOpsClient : IAzureDevOpsClient
             if (!string.IsNullOrWhiteSpace(_repoFilter))
                 url += $"&searchCriteria.repositoryId={Uri.EscapeDataString(_repoFilter)}";
 
-            var response = await AdoRetryHelper.GetWithRetryAsync(_http, url, ct);
+            using var response = await AdoRetryHelper.GetWithRetryAsync(_http, url, ct);
             var body = await response.Content.ReadAsStringAsync(ct);
             var result = JsonSerializer.Deserialize<AdoListResponse<AdoPullRequest>>(body, JsonOpts);
             var pageItems = result?.Value;
@@ -66,11 +61,36 @@ public sealed class AzureDevOpsClient : IAzureDevOpsClient
         var url = $"{_orgUrl}/{Uri.EscapeDataString(_project)}/_apis/git/repositories/{Uri.EscapeDataString(repoId)}" +
                   $"/pullrequests/{prId}/threads?api-version={ApiVersions.PullRequestThreads}";
 
-        var response = await AdoRetryHelper.GetWithRetryAsync(_http, url, ct);
-
+        using var response = await AdoRetryHelper.GetWithRetryAsync(_http, url, ct);
         var body = await response.Content.ReadAsStringAsync(ct);
         var result = JsonSerializer.Deserialize<AdoListResponse<AdoThread>>(body, JsonOpts);
         return result?.Value?.Select(MapThread).ToList() ?? [];
+    }
+
+    public async Task<IdentityRefDto?> GetAuthenticatedUserAsync(CancellationToken ct = default)
+    {
+        var url = $"{_orgUrl}/_apis/connectionData?api-version={ApiVersions.ConnectionData}";
+        using var response = await AdoRetryHelper.GetWithRetryAsync(_http, url, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        var result = JsonSerializer.Deserialize<AdoConnectionData>(body, JsonOpts);
+        var user = result?.AuthenticatedUser;
+        if (user == null) return null;
+
+        string email = string.Empty;
+        if (user.Properties != null && user.Properties.TryGetValue("Account", out var acct))
+        {
+            if (acct.ValueKind == JsonValueKind.Object && acct.TryGetProperty("$value", out var v) && v.ValueKind == JsonValueKind.String)
+                email = v.GetString() ?? string.Empty;
+            else if (acct.ValueKind == JsonValueKind.String)
+                email = acct.GetString() ?? string.Empty;
+        }
+
+        return new IdentityRefDto
+        {
+            Id = user.Id ?? string.Empty,
+            DisplayName = user.ProviderDisplayName ?? user.CustomDisplayName ?? string.Empty,
+            UniqueName = email
+        };
     }
 
     private PullRequestDto Map(AdoPullRequest pr) => new()
@@ -169,5 +189,17 @@ public sealed class AzureDevOpsClient : IAzureDevOpsClient
         public string? UniqueName { get; set; }
         public string? Id { get; set; }
         public int Vote { get; set; }
+    }
+
+    private sealed class AdoConnectionData
+    {
+        public AdoAuthenticatedUser? AuthenticatedUser { get; set; }
+    }
+    private sealed class AdoAuthenticatedUser
+    {
+        public string? Id { get; set; }
+        public string? ProviderDisplayName { get; set; }
+        public string? CustomDisplayName { get; set; }
+        public Dictionary<string, JsonElement>? Properties { get; set; }
     }
 }
