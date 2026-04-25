@@ -22,6 +22,8 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     private PollingService? _prPoller;
     private WorkItemPollingService? _wiPoller;
+    private EventHandler? _prPollCompleted;
+    private EventHandler? _wiPollCompleted;
     private Dictionary<string, int> _lastMenuCounts = [];
     private string[] _lastMenuInboxKeys = [];
 
@@ -130,12 +132,14 @@ public sealed class TrayApplicationContext : ApplicationContext
         _prPoller = new PollingService(adoClient, _store, notifications, _settings, _debugLog);
         _wiPoller = new WorkItemPollingService(wiClient, _store, _settings, _debugLog);
 
-        _prPoller.PollCompleted += (_, _) => _uiSync.Post(_ => RunBackground(RefreshTrayAsync, "refresh-tray"), null);
-        _wiPoller.PollCompleted += (_, _) => _uiSync.Post(_ =>
+        _prPollCompleted = (_, _) => _uiSync.Post(_ => RunBackground(RefreshTrayAsync, "refresh-tray"), null);
+        _wiPollCompleted = (_, _) => _uiSync.Post(_ =>
         {
             if (_boardForm?.Visible == true) RunBackground(() => _boardForm.LoadAsync(), "board-load");
-            if (_wiPoller.LastPollFailed && _boardForm != null) _boardForm.ShowStaleBanner = true;
+            if (_wiPoller!.LastPollFailed && _boardForm != null) _boardForm.ShowStaleBanner = true;
         }, null);
+        _prPoller.PollCompleted += _prPollCompleted;
+        _wiPoller.PollCompleted += _wiPollCompleted;
 
         await RefreshTrayAsync();
 
@@ -394,11 +398,12 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         if (_exitCleanupStarted) return;
         _exitCleanupStarted = true;
+        UnsubscribePollHandlers();
         try
         {
-            _prPoller?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(2));
-            _wiPoller?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(2));
-            _store.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(2));
+            // Run the async cleanup on a thread-pool thread so awaits don't try to resume
+            // on the (shutting-down) WinForms sync context — that's the deadlock pattern.
+            Task.Run(DisposeAllAsync).Wait(TimeSpan.FromSeconds(2));
         }
         catch (Exception ex) { Log.Error(ex, "ApplicationExit cleanup failed"); }
     }
@@ -411,11 +416,24 @@ public sealed class TrayApplicationContext : ApplicationContext
             _aiHttpClient?.Dispose();
             if (!_exitCleanupStarted)
             {
-                _prPoller?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(1));
-                _wiPoller?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(1));
-                _store.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(1));
+                UnsubscribePollHandlers();
+                try { Task.Run(DisposeAllAsync).Wait(TimeSpan.FromSeconds(1)); }
+                catch (Exception ex) { Log.Error(ex, "Dispose cleanup failed"); }
             }
         }
         base.Dispose(disposing);
+    }
+
+    private void UnsubscribePollHandlers()
+    {
+        if (_prPoller != null && _prPollCompleted != null) _prPoller.PollCompleted -= _prPollCompleted;
+        if (_wiPoller != null && _wiPollCompleted != null) _wiPoller.PollCompleted -= _wiPollCompleted;
+    }
+
+    private async Task DisposeAllAsync()
+    {
+        if (_prPoller != null) await _prPoller.DisposeAsync();
+        if (_wiPoller != null) await _wiPoller.DisposeAsync();
+        await _store.DisposeAsync();
     }
 }
