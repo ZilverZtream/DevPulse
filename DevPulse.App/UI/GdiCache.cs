@@ -16,6 +16,12 @@ internal static class GdiCache
     public static readonly Font InitialsFont = new("Segoe UI", 7f, FontStyle.Bold);
     public static readonly Font LinkFont = new("Segoe UI", 7.5f, FontStyle.Regular);
 
+    // Used by SortableListView. Header is bold so columns visually anchor to the row band.
+    public static readonly Font ListHeaderFont = new("Segoe UI", 8.75f, FontStyle.Bold);
+    public static readonly Font ListRowFont = new("Segoe UI", 8.75f, FontStyle.Regular);
+    public static readonly Font ListEmptyFont = new("Segoe UI", 9.5f, FontStyle.Italic);
+    public static readonly Font ListArrowFont = new("Segoe UI Symbol", 8f, FontStyle.Bold);
+
     public static readonly StringFormat TitleFormat = new()
     {
         Trimming = StringTrimming.EllipsisCharacter,
