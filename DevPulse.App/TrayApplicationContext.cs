@@ -33,6 +33,15 @@ public sealed class TrayApplicationContext : ApplicationContext
     private HttpClient? _aiHttpClient;
 
     private NotifyIcon _trayIcon = null!;
+    private Icon? _baseIcon;
+    private readonly Dictionary<HealthStatus, Icon> _composedIcons = new();
+    private HealthStatus? _lastAppliedStatus;
+    // Recent failure streak per track. PollCompleted only fires on success today, so streaks
+    // currently reset on success and cannot increment from this side without a failure event.
+    private int _recentPrFails;
+    private int _recentWiFails;
+    private const int FailingThreshold = 3;
+    private static readonly TimeSpan StaleThreshold = TimeSpan.FromHours(2);
     private BoardForm? _boardForm;
     private DebugWindow? _debugWindow;
     private SettingsForm? _settingsForm;
@@ -138,11 +147,17 @@ public sealed class TrayApplicationContext : ApplicationContext
         _prPoller = new PollingService(adoClient, _store, notifications, _settings, _debugLog);
         _wiPoller = new WorkItemPollingService(wiClient, _store, _settings, _debugLog);
 
-        _prPollCompleted = (_, _) => _uiSync.Post(_ => RunBackground(RefreshTrayAsync, "refresh-tray"), null);
+        _prPollCompleted = (_, _) =>
+        {
+            _recentPrFails = 0;
+            _uiSync.Post(_ => RunBackground(RefreshTrayAsync, "refresh-tray"), null);
+        };
         _wiPollCompleted = (_, _) => _uiSync.Post(_ =>
         {
+            _recentWiFails = 0;
             if (_boardForm?.Visible == true) RunBackground(() => _boardForm.LoadAsync(), "board-load");
             if (_wiPoller!.LastPollFailed && _boardForm != null) _boardForm.ShowStaleBanner = true;
+            RunBackground(RefreshTrayAsync, "refresh-tray-wi");
         }, null);
         _prPoller.PollCompleted += _prPollCompleted;
         _wiPoller.PollCompleted += _wiPollCompleted;
@@ -204,14 +219,24 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     private void BuildTrayIcon()
     {
+        _baseIcon = CreateIcon();
         _trayIcon = new NotifyIcon
         {
-            Icon = CreateIcon(),
+            Icon = GetComposedIcon(HealthStatus.Initializing),
             Text = "DevPulse — starting…",
             Visible = true
         };
+        _lastAppliedStatus = HealthStatus.Initializing;
         _trayIcon.DoubleClick += (_, _) => ShowBoard();
         _trayIcon.ContextMenuStrip = BuildMinimalMenu();
+    }
+
+    private Icon GetComposedIcon(HealthStatus status)
+    {
+        if (_composedIcons.TryGetValue(status, out var cached)) return cached;
+        var composed = TrayIconBuilder.Compose(_baseIcon!, status);
+        _composedIcons[status] = composed;
+        return composed;
     }
 
     private ContextMenuStrip BuildMinimalMenu()
@@ -252,9 +277,87 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         var systemInboxName = inboxes.FirstOrDefault(i => i.IsSystemInbox)?.Name ?? "Needs My Attention";
         var nma = counts.GetValueOrDefault(systemInboxName);
-        var text = nma > 0 ? $"DevPulse — {systemInboxName}: {nma}" : "DevPulse — No attention needed";
-        if (_trayIcon != null)
-            _trayIcon.Text = string.Concat(text.EnumerateRunes().Take(63).Select(r => r.ToString()));
+
+        var prLast = await _store.GetLastSuccessfulPollAsync("prs");
+        var wiLast = await _store.GetLastSuccessfulPollAsync("workitems");
+        DateTimeOffset? mostRecent = (prLast, wiLast) switch
+        {
+            (not null, not null) => prLast > wiLast ? prLast : wiLast,
+            (not null, null) => prLast,
+            (null, not null) => wiLast,
+            _ => null
+        };
+
+        var status = DetermineHealth(prLast, wiLast);
+        ApplyTrayIconAndText(status, nma, systemInboxName, mostRecent);
+    }
+
+    private HealthStatus DetermineHealth(DateTimeOffset? prLastSuccess, DateTimeOffset? wiLastSuccess)
+    {
+        if (_prPoller == null || _wiPoller == null)
+            return HealthStatus.Initializing;
+
+        // AuthRequired beats Failing — both render red but the Text summary differs.
+        var prAuth = _prPoller.LastErrorRequiresUserAction && _prPoller.LastErrorKind == PollErrorKind.AuthRequired;
+        var wiAuth = _wiPoller.LastErrorRequiresUserAction && _wiPoller.LastErrorKind == PollErrorKind.AuthRequired;
+        if (prAuth || wiAuth) return HealthStatus.AuthRequired;
+
+        if (_prPoller.LastErrorRequiresUserAction || _wiPoller.LastErrorRequiresUserAction)
+            return HealthStatus.Failing;
+
+        if (_recentPrFails >= FailingThreshold || _recentWiFails >= FailingThreshold)
+            return HealthStatus.Failing;
+
+        // Both tracks must be stale to flip the icon yellow — a single recent success keeps it green.
+        var now = DateTimeOffset.UtcNow;
+        var prStale = !prLastSuccess.HasValue || (now - prLastSuccess.Value) > StaleThreshold;
+        var wiStale = !wiLastSuccess.HasValue || (now - wiLastSuccess.Value) > StaleThreshold;
+        if (prStale && wiStale) return HealthStatus.Stale;
+
+        if (_recentPrFails > 0 || _recentWiFails > 0) return HealthStatus.Stale;
+
+        return HealthStatus.Healthy;
+    }
+
+    private void ApplyTrayIconAndText(HealthStatus status, int unreadCount, string systemInboxName, DateTimeOffset? mostRecentSuccess)
+    {
+        if (_trayIcon == null) return;
+        if (status != _lastAppliedStatus)
+        {
+            _trayIcon.Icon = GetComposedIcon(status);
+            _lastAppliedStatus = status;
+        }
+        var summary = BuildTrayText(status, unreadCount, systemInboxName, mostRecentSuccess);
+        // NotifyIcon.Text is hard-capped at 127 chars by Windows shell.
+        if (summary.Length > 127) summary = summary[..127];
+        _trayIcon.Text = summary;
+    }
+
+    private static string BuildTrayText(HealthStatus status, int unreadCount, string systemInboxName, DateTimeOffset? lastSuccess)
+    {
+        var unreadFragment = unreadCount > 0
+            ? $"{unreadCount} unread in {systemInboxName}"
+            : "No attention needed";
+        var lastFragment = lastSuccess.HasValue
+            ? $"last poll {FormatAge(DateTimeOffset.UtcNow - lastSuccess.Value)} ago"
+            : "no successful poll yet";
+
+        return status switch
+        {
+            HealthStatus.AuthRequired => "DevPulse — Authentication failed",
+            HealthStatus.Failing => $"DevPulse — Polling failing • {lastFragment}",
+            HealthStatus.Stale => $"DevPulse — Stale • {lastFragment}",
+            HealthStatus.Initializing => "DevPulse — starting…",
+            _ => $"DevPulse — {unreadFragment} • {lastFragment}",
+        };
+    }
+
+    private static string FormatAge(TimeSpan age)
+    {
+        if (age.TotalSeconds < 60) return $"{Math.Max(0, (int)age.TotalSeconds)}s";
+        if (age.TotalMinutes < 60) return $"{(int)age.TotalMinutes}m";
+        if (age.TotalHours < 24) return $"{(int)age.TotalHours}h";
+        return $"{(int)age.TotalDays}d";
     }
 
     private void RebuildMenu(
@@ -438,6 +541,12 @@ public sealed class TrayApplicationContext : ApplicationContext
         if (disposing)
         {
             _trayIcon?.Dispose();
+            foreach (var icon in _composedIcons.Values)
+            {
+                try { icon.Dispose(); } catch { /* Icon.Dispose calls DestroyIcon — best-effort */ }
+            }
+            _composedIcons.Clear();
+            _baseIcon?.Dispose();
             _aiHttpClient?.Dispose();
             if (!_exitCleanupStarted)
             {
