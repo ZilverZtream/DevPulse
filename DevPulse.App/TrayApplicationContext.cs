@@ -150,13 +150,18 @@ public sealed class TrayApplicationContext : ApplicationContext
         _prPollCompleted = (_, _) =>
         {
             _recentPrFails = 0;
-            _uiSync.Post(_ => RunBackground(RefreshTrayAsync, "refresh-tray"), null);
+            _uiSync.Post(_ =>
+            {
+                _boardForm?.RefreshErrorBanner();
+                RunBackground(RefreshTrayAsync, "refresh-tray");
+            }, null);
         };
         _wiPollCompleted = (_, _) => _uiSync.Post(_ =>
         {
             _recentWiFails = 0;
             if (_boardForm?.Visible == true) RunBackground(() => _boardForm.LoadAsync(), "board-load");
             if (_wiPoller!.LastPollFailed && _boardForm != null) _boardForm.ShowStaleBanner = true;
+            _boardForm?.RefreshErrorBanner();
             RunBackground(RefreshTrayAsync, "refresh-tray-wi");
         }, null);
         _prPoller.PollCompleted += _prPollCompleted;
@@ -422,6 +427,8 @@ public sealed class TrayApplicationContext : ApplicationContext
             _boardForm = new BoardForm(_store, _settings);
             if (_aiPipeline != null)
                 _boardForm.AttachAi(_aiPipeline, _aiProviders, _aiTemplates);
+            _boardForm.ErrorStateProvider = BuildBoardErrorState;
+            _boardForm.OpenSettingsAction = ShowSettings;
             _boardForm.FormClosed += (_, _) => _boardForm = null;
         }
         _boardForm.Show();
@@ -569,5 +576,17 @@ public sealed class TrayApplicationContext : ApplicationContext
         if (_prPoller != null) await _prPoller.DisposeAsync();
         if (_wiPoller != null) await _wiPoller.DisposeAsync();
         await _store.DisposeAsync();
+    }
+
+    private BoardErrorState BuildBoardErrorState()
+    {
+        var pr = _prPoller;
+        var wi = _wiPoller;
+        var requires = (pr?.LastErrorRequiresUserAction ?? false) || (wi?.LastErrorRequiresUserAction ?? false);
+        var reason = pr?.LastErrorReason ?? wi?.LastErrorReason;
+        var kind = (pr?.LastErrorKind ?? PollErrorKind.Unknown) != PollErrorKind.Unknown
+            ? pr!.LastErrorKind
+            : (wi?.LastErrorKind ?? PollErrorKind.Unknown);
+        return new BoardErrorState(requires, reason, kind);
     }
 }
