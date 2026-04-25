@@ -30,7 +30,12 @@ public sealed partial class AiGenerateDialog : Form
         _lblHeader.Text = $"Work item #{workItem.Id} — {workItem.Title}";
         PopulateTemplates();
         PopulateProviders();
-        FormClosing += (_, _) => _cts.Cancel();
+        FormClosing += (_, _) =>
+        {
+            try { _cts.Cancel(); }
+            catch (ObjectDisposedException) { /* already disposed */ }
+        };
+        Disposed += (_, _) => _cts.Dispose();
     }
 
     private void PopulateTemplates()

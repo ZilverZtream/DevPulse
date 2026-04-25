@@ -80,8 +80,7 @@ public sealed class BoardColumnPanel : Panel
     {
         base.OnPaint(e);
         var dot = _columnIndex < DotColors.Length ? DotColors[_columnIndex] : Color.Gray;
-        using var br = new SolidBrush(dot);
-        e.Graphics.FillEllipse(br, 6, 10, 10, 10);
+        e.Graphics.FillEllipse(GdiCache.Brush(dot), 6, 10, 10, 10);
     }
 
     protected override void OnResize(EventArgs e)

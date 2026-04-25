@@ -29,14 +29,18 @@ public sealed class WorkItemCard : Panel
         ["4"] = Color.FromArgb(100, 100, 120)
     };
 
+    private static readonly Color[] InitialsPalette =
+    [
+        Color.FromArgb(80, 120, 180),
+        Color.FromArgb(120, 80, 160),
+        Color.FromArgb(60, 140, 100),
+        Color.FromArgb(160, 80, 80)
+    ];
+
     public WorkItem Item { get; }
     public bool Dimmed { get; set; }
 
-    private static readonly Font TitleFont = new("Segoe UI", 9f, FontStyle.Regular);
-    private static readonly Font IdFont = new("Segoe UI", 8f, FontStyle.Bold);
-    private static readonly Font BadgeFont = new("Segoe UI", 7.5f, FontStyle.Bold);
-    private static readonly Font InitialsFont = new("Segoe UI", 7f, FontStyle.Bold);
-    private static readonly Font LinkFont = new("Segoe UI", 7.5f, FontStyle.Regular);
+    private readonly string _initials;
 
     public WorkItemCard(WorkItem item)
     {
@@ -48,7 +52,21 @@ public sealed class WorkItemCard : Panel
         BackColor = BgNormal;
         SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true);
 
+        _initials = ComputeInitials(item.AssignedToDisplayName);
+
         ContextMenuStrip = BuildContextMenu();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            // ContextMenuStrip is owned by this card — Panel doesn't dispose it for us.
+            var menu = ContextMenuStrip;
+            ContextMenuStrip = null;
+            menu?.Dispose();
+        }
+        base.Dispose(disposing);
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -59,30 +77,23 @@ public sealed class WorkItemCard : Panel
 
         var alpha = Dimmed ? 80 : 255;
         var bg = Color.FromArgb(alpha, BgNormal);
-        var border = Item.AgingLevel == AgingLevel.Stale ? BgStaleBorder : BgBorder;
+        var borderColor = Item.AgingLevel == AgingLevel.Stale ? BgStaleBorder : BgBorder;
+        var borderWidth = Item.AgingLevel == AgingLevel.Stale ? 2f : 1f;
 
-        using (var br = new SolidBrush(bg))
-            g.FillRoundedRectangle(br, 0, 0, Width - 1, Height - 1, 6);
-
-        using (var pen = new Pen(border, Item.AgingLevel == AgingLevel.Stale ? 2 : 1))
-            g.DrawRoundedRectangle(pen, 0, 0, Width - 1, Height - 1, 6);
+        GdiCache.FillRoundedRect(g, bg, 0, 0, Width - 1, Height - 1, 6);
+        GdiCache.DrawRoundedRect(g, borderColor, borderWidth, 0, 0, Width - 1, Height - 1, 6);
 
         int y = 8;
 
         // ID
-        using (var br = new SolidBrush(Color.FromArgb(alpha, TextSecondary)))
-            g.DrawString($"#{Item.Id}", IdFont, br, 8, y);
+        g.DrawString($"#{Item.Id}", GdiCache.IdFont, GdiCache.Brush(Color.FromArgb(alpha, TextSecondary)), 8, y);
 
         y += 16;
 
         // Title
         var titleRect = new RectangleF(8, y, Width - 16, 32);
-        using (var br = new SolidBrush(Color.FromArgb(alpha, TextPrimary)))
-        using (var sf = new StringFormat { Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.LineLimit })
-        {
-            sf.LineAlignment = StringAlignment.Near;
-            g.DrawString(Item.Title, TitleFont, br, titleRect, sf);
-        }
+        g.DrawString(Item.Title, GdiCache.TitleFont,
+            GdiCache.Brush(Color.FromArgb(alpha, TextPrimary)), titleRect, GdiCache.TitleFormat);
 
         y += 36;
 
@@ -97,7 +108,7 @@ public sealed class WorkItemCard : Panel
         if (!string.IsNullOrEmpty(Item.AssignedToDisplayName))
         {
             x += 6;
-            DrawInitialsCircle(g, Item.AssignedToDisplayName, x, y, alpha);
+            DrawInitialsCircle(g, Item.AssignedToDisplayName, _initials, x, y, alpha);
             x += 24;
         }
 
@@ -116,40 +127,33 @@ public sealed class WorkItemCard : Panel
         // PR link
         if (!string.IsNullOrEmpty(Item.LinkedPullRequestId))
         {
-            using var br = new SolidBrush(Color.FromArgb(alpha, AccentBlue));
-            g.DrawString($"PR #{Item.LinkedPullRequestId}", LinkFont, br, 8, y);
+            g.DrawString($"PR #{Item.LinkedPullRequestId}", GdiCache.LinkFont,
+                GdiCache.Brush(Color.FromArgb(alpha, AccentBlue)), 8, y);
         }
     }
 
     private static int DrawBadge(Graphics g, string text, Color color, int x, int y, int alpha)
     {
-        var size = g.MeasureString(text, BadgeFont);
+        var size = g.MeasureString(text, GdiCache.BadgeFont);
         int w = (int)size.Width + 10, h = 16;
-        using var br = new SolidBrush(Color.FromArgb(alpha, color));
-        g.FillRoundedRectangle(br, x, y, w, h, 4);
-        using var textBr = new SolidBrush(Color.FromArgb(alpha, Color.White));
-        g.DrawString(text, BadgeFont, textBr, x + 5, y + 2);
+        GdiCache.FillRoundedRect(g, Color.FromArgb(alpha, color), x, y, w, h, 4);
+        g.DrawString(text, GdiCache.BadgeFont, GdiCache.Brush(Color.FromArgb(alpha, Color.White)), x + 5, y + 2);
         return x + w;
     }
 
-    private static void DrawInitialsCircle(Graphics g, string displayName, int x, int y, int alpha)
+    private static void DrawInitialsCircle(Graphics g, string displayName, string initials, int x, int y, int alpha)
     {
-        var initials = GetInitials(displayName);
         var hash = Math.Abs(displayName.GetHashCode());
-        var colors = new[] {
-            Color.FromArgb(80, 120, 180), Color.FromArgb(120, 80, 160),
-            Color.FromArgb(60, 140, 100), Color.FromArgb(160, 80, 80)
-        };
-        var c = colors[hash % colors.Length];
-        using var br = new SolidBrush(Color.FromArgb(alpha, c));
-        g.FillEllipse(br, x, y, 18, 18);
-        using var textBr = new SolidBrush(Color.FromArgb(alpha, Color.White));
-        using var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-        g.DrawString(initials, InitialsFont, textBr, new RectangleF(x, y, 18, 18), sf);
+        var c = InitialsPalette[hash % InitialsPalette.Length];
+        g.FillEllipse(GdiCache.Brush(Color.FromArgb(alpha, c)), x, y, 18, 18);
+        g.DrawString(initials, GdiCache.InitialsFont,
+            GdiCache.Brush(Color.FromArgb(alpha, Color.White)),
+            new RectangleF(x, y, 18, 18), GdiCache.CenterFormat);
     }
 
-    private static string GetInitials(string name)
+    internal static string ComputeInitials(string? name)
     {
+        if (string.IsNullOrWhiteSpace(name)) return string.Empty;
         var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         return parts.Length >= 2
             ? $"{parts[0][0]}{parts[^1][0]}".ToUpper()
@@ -198,29 +202,18 @@ public sealed class WorkItemCard : Panel
     }
 }
 
-// Graphics extension helpers
+// Graphics extension helpers — kept for compatibility; new code should use GdiCache directly.
 internal static class GraphicsExtensions
 {
     public static void FillRoundedRectangle(this Graphics g, Brush brush, float x, float y, float w, float h, float r)
     {
-        using var path = RoundedRect(x, y, w, h, r);
+        using var path = GdiCache.RoundedRect(x, y, w, h, r);
         g.FillPath(brush, path);
     }
 
     public static void DrawRoundedRectangle(this Graphics g, Pen pen, float x, float y, float w, float h, float r)
     {
-        using var path = RoundedRect(x, y, w, h, r);
+        using var path = GdiCache.RoundedRect(x, y, w, h, r);
         g.DrawPath(pen, path);
-    }
-
-    private static System.Drawing.Drawing2D.GraphicsPath RoundedRect(float x, float y, float w, float h, float r)
-    {
-        var path = new System.Drawing.Drawing2D.GraphicsPath();
-        path.AddArc(x, y, r * 2, r * 2, 180, 90);
-        path.AddArc(x + w - r * 2, y, r * 2, r * 2, 270, 90);
-        path.AddArc(x + w - r * 2, y + h - r * 2, r * 2, r * 2, 0, 90);
-        path.AddArc(x, y + h - r * 2, r * 2, r * 2, 90, 90);
-        path.CloseFigure();
-        return path;
     }
 }
